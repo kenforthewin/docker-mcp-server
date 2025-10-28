@@ -20,6 +20,9 @@ COPY package*.json ./
 COPY tsconfig.json ./
 COPY src ./src
 
+# Copy MCP servers configuration (optional)
+COPY mcp-servers.json* ./
+
 # Install dependencies and build
 RUN npm install
 RUN npm run build

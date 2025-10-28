@@ -75,7 +75,7 @@ This server acts as an **aggregator** that can run multiple child MCP servers in
 
 ### Configuration
 
-Create a file at `/app/workspace/mcp-servers.json` (maps to `./tmp/mcp-servers.json` on host) to define child servers:
+Create a file named `mcp-servers.json` in the repository root (same directory as `Dockerfile.debian`) to define child servers. This file is copied into the container at build time:
 
 ```json
 {
@@ -157,7 +157,9 @@ Tools from child servers are namespaced to avoid conflicts:
 }
 ```
 
-See `./tmp/mcp-servers.json.example` for a complete example configuration.
+See `./mcp-servers.json.example` for a complete example configuration.
+
+**Note**: Changes to the config file require rebuilding the container with `npm run docker:restart` since the config is baked into the image at build time.
 
 ## Process Management System
 
@@ -186,10 +188,11 @@ The server requires bearer token authentication on all requests:
 ### Docker Build Process
 1. Container builds from `Dockerfile.debian`
 2. Copies source code (`package.json`, `tsconfig.json`, `src/`) into container
-3. Runs `npm install` and `npm run build` inside container
-4. Creates `/app/workspace` directory
-5. Exposes port 3000
-6. Starts server with `node dist/index.js --port 3000`
+3. Copies `mcp-servers.json` config file (if present) into container
+4. Runs `npm install` and `npm run build` inside container
+5. Creates `/app/workspace` directory
+6. Exposes port 3000
+7. Starts server with `node dist/index.js --port 3000`
 
 ### Container Startup
 1. Server starts and binds to `0.0.0.0:3000`

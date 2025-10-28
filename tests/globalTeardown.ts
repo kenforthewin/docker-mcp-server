@@ -35,6 +35,14 @@ export default async function globalTeardown() {
     // Ignore if file doesn't exist
   }
 
+  console.log('\n4. Removing MCP servers config from repository root...');
+  try {
+    execSync('rm -f mcp-servers.json', { stdio: 'ignore' });
+    console.log('✓ MCP servers config removed');
+  } catch (error) {
+    // Ignore cleanup errors
+  }
+
   console.log('\n' + '='.repeat(70));
   console.log('Global Cleanup Complete');
   console.log('='.repeat(70) + '\n');

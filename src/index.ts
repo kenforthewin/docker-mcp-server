@@ -1613,10 +1613,10 @@ interface AggregatorConfig {
 }
 
 /**
- * Load MCP server configuration from workspace
+ * Load MCP server configuration (baked into container at build time)
  */
 async function loadAggregatorConfig(): Promise<AggregatorConfig> {
-  const configPath = "/app/workspace/mcp-servers.json";
+  const configPath = "/app/mcp-servers.json";
 
   try {
     const configData = await readFile(configPath, "utf-8");

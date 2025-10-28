@@ -71,20 +71,20 @@ export default async function globalSetup() {
     console.log('✓ No existing containers to stop');
   }
 
-  console.log('\n3. Building Docker container with test configuration...');
+  console.log('\n3. Copying test MCP server config for build...');
+  try {
+    execSync('cp tests/test-mcp-servers.json mcp-servers.json', { stdio: 'inherit' });
+    console.log('✓ Test config copied to repository root');
+  } catch (error) {
+    console.error('Warning: Failed to copy test config, tests may not have child servers');
+  }
+
+  console.log('\n4. Building Docker container with test configuration...');
   try {
     execSync('docker-compose build', { stdio: 'inherit' });
     console.log('✓ Container built successfully');
   } catch (error) {
     throw new Error('Failed to build Docker container');
-  }
-
-  console.log('\n4. Copying test MCP server config to workspace...');
-  try {
-    execSync('cp tests/test-mcp-servers.json tmp/mcp-servers.json', { stdio: 'inherit' });
-    console.log('✓ Test config copied');
-  } catch (error) {
-    console.error('Warning: Failed to copy test config, tests may not have child servers');
   }
 
   console.log('\n5. Starting MCP server container...');

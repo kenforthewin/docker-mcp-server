@@ -79,7 +79,15 @@ export default async function globalSetup() {
     throw new Error('Failed to build Docker container');
   }
 
-  console.log('\n4. Starting MCP server container...');
+  console.log('\n4. Copying test MCP server config to workspace...');
+  try {
+    execSync('cp tests/test-mcp-servers.json tmp/mcp-servers.json', { stdio: 'inherit' });
+    console.log('✓ Test config copied');
+  } catch (error) {
+    console.error('Warning: Failed to copy test config, tests may not have child servers');
+  }
+
+  console.log('\n5. Starting MCP server container...');
   try {
     execSync('docker-compose up -d', {
       stdio: 'inherit'
@@ -89,7 +97,7 @@ export default async function globalSetup() {
     throw new Error('Failed to start Docker container');
   }
 
-  console.log('\n5. Extracting auth token from container logs...');
+  console.log('\n6. Extracting auth token from container logs...');
   let authToken = '';
   try {
     // Wait a moment for server to start and log the token
@@ -115,7 +123,7 @@ export default async function globalSetup() {
     throw error;
   }
 
-  console.log('\n6. Waiting for MCP server to be ready...');
+  console.log('\n7. Waiting for MCP server to be ready...');
   try {
     await waitForServer(authToken);
     console.log('✓ MCP server is ready for tests');

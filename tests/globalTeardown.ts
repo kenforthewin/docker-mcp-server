@@ -26,7 +26,7 @@ export default async function globalTeardown() {
     // Ignore cleanup errors
   }
 
-  console.log('\n3. Removing test configuration file...');
+  console.log('\n3. Removing test configuration files...');
   try {
     const configPath = join(__dirname, 'test-config.json');
     unlinkSync(configPath);

@@ -69,6 +69,96 @@ This is an **MCP (Model Context Protocol) Server** that runs entirely inside a D
 
 All file operations work within `/app/workspace` which is mounted from host `./tmp`.
 
+## MCP Server Aggregation
+
+This server acts as an **aggregator** that can run multiple child MCP servers inside the container and expose all their tools as a unified interface. This allows you to combine specialized MCP servers (like Playwright, filesystem, git, etc.) with the native tools.
+
+### Configuration
+
+Create a file at `/app/workspace/mcp-servers.json` (maps to `./tmp/mcp-servers.json` on host) to define child servers:
+
+```json
+{
+  "servers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@automatalabs/mcp-server-playwright"],
+      "env": {
+        "PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/app/workspace"]
+    }
+  }
+}
+```
+
+**Config Options:**
+- `command`: Executable to run (e.g., "npx", "node", "python")
+- `args`: Command-line arguments (optional)
+- `env`: Environment variables (optional)
+
+### Tool Namespacing
+
+Tools from child servers are namespaced to avoid conflicts:
+- **Native tools**: `execute_command`, `file_read`, etc. (unchanged)
+- **Child server tools**: `serverName:toolName`
+  - Example: `playwright:screenshot`, `playwright:navigate`
+  - Example: `filesystem:read_file`, `filesystem:write_file`
+
+### How It Works
+
+1. **Startup**: Server loads config and spawns child MCP servers as subprocesses
+2. **Discovery**: Connects to each child via stdio transport and discovers their tools
+3. **Registration**: All tools are registered with the main server with namespaced names
+4. **Routing**: When a tool is called, the aggregator routes it to the appropriate child server
+5. **Results**: Results are returned through the main server to the client
+
+### Error Handling
+
+- **Missing config**: Server starts normally with native tools only
+- **Failed child servers**: Server continues without them, logs errors
+- **Child server crashes**: Automatic restart with exponential backoff (max 3 attempts)
+- **Tool call errors**: Returns helpful error messages, doesn't crash the aggregator
+
+### Example Child Servers
+
+**Playwright** (browser automation):
+```json
+"playwright": {
+  "command": "npx",
+  "args": ["-y", "@automatalabs/mcp-server-playwright"]
+}
+```
+
+**Filesystem** (file operations):
+```json
+"filesystem": {
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/app/workspace"]
+}
+```
+
+**Git** (version control):
+```json
+"git": {
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-git", "--repository", "/app/workspace"]
+}
+```
+
+**Fetch** (HTTP requests):
+```json
+"fetch": {
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-fetch"]
+}
+```
+
+See `./tmp/mcp-servers.json.example` for a complete example configuration.
+
 ## Process Management System
 
 Commands run with intelligent timeout handling:

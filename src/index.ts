@@ -8,6 +8,8 @@ import { spawn, ChildProcess } from "child_process";
 import { Command } from "commander";
 import http from "http";
 import { randomUUID } from "crypto";
+import { readFile } from "fs/promises";
+import { ChildServerManager, type ServerConfig } from "./childServerManager.js";
 
 // Parse CLI arguments
 const program = new Command();
@@ -48,6 +50,9 @@ const server = new McpServer({
   name: "docker-mcp-server",
   version: "1.0.0"
 });
+
+// Child server manager for aggregating multiple MCP servers
+const childServerManager = new ChildServerManager();
 
 server.registerTool(
   "execute_command",
@@ -1600,12 +1605,128 @@ except Exception as e:
   }
 );
 
+/**
+ * Configuration format for MCP server aggregation
+ */
+interface AggregatorConfig {
+  servers: Record<string, ServerConfig>;
+}
+
+/**
+ * Load MCP server configuration from workspace
+ */
+async function loadAggregatorConfig(): Promise<AggregatorConfig> {
+  const configPath = "/app/workspace/mcp-servers.json";
+
+  try {
+    const configData = await readFile(configPath, "utf-8");
+    const config = JSON.parse(configData) as AggregatorConfig;
+
+    console.error(`[Aggregator] Loaded config from ${configPath}`);
+    console.error(
+      `[Aggregator] Found ${Object.keys(config.servers).length} child server(s) configured`
+    );
+
+    return config;
+  } catch (error: any) {
+    if (error.code === "ENOENT") {
+      console.error(
+        `[Aggregator] No config file found at ${configPath}, starting without child servers`
+      );
+    } else {
+      console.error(`[Aggregator] Error loading config:`, error);
+    }
+
+    return { servers: {} };
+  }
+}
+
+/**
+ * Initialize all configured child MCP servers
+ */
+async function initializeChildServers(): Promise<void> {
+  const config = await loadAggregatorConfig();
+
+  const serverNames = Object.keys(config.servers);
+  if (serverNames.length === 0) {
+    console.error("[Aggregator] No child servers to initialize");
+    return;
+  }
+
+  console.error(`[Aggregator] Initializing ${serverNames.length} child server(s)...`);
+
+  // Start all servers in parallel
+  const startPromises = serverNames.map(async (name) => {
+    try {
+      await childServerManager.startServer(name, config.servers[name]);
+    } catch (error) {
+      console.error(`[Aggregator] Failed to start ${name}, will continue without it`);
+    }
+  });
+
+  await Promise.all(startPromises);
+
+  const connectedCount = childServerManager.getConnectedServers().length;
+  console.error(
+    `[Aggregator] Successfully connected to ${connectedCount}/${serverNames.length} child server(s)`
+  );
+}
+
+/**
+ * Register aggregated tools from all child servers
+ */
+async function registerAggregatedTools(): Promise<void> {
+  // Give child servers a moment to fully initialize
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  console.error("[Aggregator] Discovering tools from child servers...");
+
+  const aggregatedTools = await childServerManager.aggregateTools();
+
+  if (aggregatedTools.length === 0) {
+    console.error("[Aggregator] No tools found from child servers");
+    return;
+  }
+
+  console.error(
+    `[Aggregator] Registering ${aggregatedTools.length} tool(s) from child servers`
+  );
+
+  // Register each aggregated tool with the main server
+  for (const tool of aggregatedTools) {
+    server.registerTool(
+      tool.name, // Already namespaced as "serverName:toolName"
+      {
+        title: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema, // Now a proper Zod schema
+      },
+      async (args: any) => {
+        // Route the tool call to the appropriate child server
+        return await childServerManager.routeToolCall(tool.name, args);
+      }
+    );
+  }
+
+  console.error(`[Aggregator] Tool registration complete`);
+}
+
 async function main() {
   console.error('='.repeat(60));
   console.error('Docker MCP Server Starting');
   console.error('='.repeat(60));
   console.error(`Port: ${PORT}`);
   console.error(`Auth Token: ${AUTH_TOKEN}`);
+  console.error('='.repeat(60));
+
+  // Initialize child MCP servers
+  await initializeChildServers();
+
+  // Register tools from child servers
+  await registerAggregatedTools();
+
+  console.error('='.repeat(60));
+  console.error('Server initialization complete');
   console.error('='.repeat(60));
 
   // Map to store transports by session ID
@@ -1760,6 +1881,10 @@ async function main() {
   // Handle server shutdown
   process.on('SIGINT', async () => {
     console.error('Shutting down server...');
+
+    // Shutdown all child servers
+    await childServerManager.stopAll();
+
     // Close all active transports
     for (const sessionId in transports) {
       try {

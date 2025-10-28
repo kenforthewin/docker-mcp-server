@@ -1,0 +1,28 @@
+# Test artifacts and temporary files
+*.log
+*.tmp
+*.temp
+
+# Test output files
+test-*.txt
+test-*.js
+test-*.sh
+grep-*.txt
+list-*.txt
+many-*.txt
+subdir/
+
+# Coverage reports (if running in tests directory)
+coverage/
+.nyc_output/
+
+# Jest cache
+.jest/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/

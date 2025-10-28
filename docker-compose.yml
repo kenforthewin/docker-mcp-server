@@ -5,9 +5,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.debian
-      network: host
     container_name: mcp-container
+    ports:
+      - "3000:3000"
     volumes:
-      - ./tmp:/app
-    command: sleep infinity
-    network_mode: host
+      - ./tmp:/app/workspace
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped

@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { spawn, ChildProcess } from "child_process";
 import { Command } from "commander";
+import http from "http";
+import { randomUUID } from "crypto";
 
 // Parse CLI arguments
 const program = new Command();
@@ -12,11 +15,13 @@ program
   .name('docker-mcp-server')
   .description('MCP server for Docker container execution')
   .version('1.0.0')
-  .option('-c, --container-name <name>', 'Docker container name to use', 'mcp-container')
+  .option('-p, --port <port>', 'Port to listen on', '3000')
+  .option('-t, --token <token>', 'Bearer token for authentication (auto-generated if not provided)')
   .parse();
 
 const options = program.opts();
-const CONTAINER_NAME = options.containerName;
+const PORT = parseInt(options.port, 10);
+const AUTH_TOKEN = options.token || randomUUID();
 
 interface ProcessInfo {
   startTime: number;
@@ -61,8 +66,9 @@ server.registerTool(
       console.error(`Rationale: ${rationale}`);
 
       const processId = generateProcessId();
-      const bashProcess = spawn("docker", ["exec", "-i", CONTAINER_NAME, "bash"], {
-        stdio: ["pipe", "pipe", "pipe"]
+      const bashProcess = spawn("bash", [], {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: "/app/workspace"
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -200,13 +206,17 @@ server.registerTool(
         }
       }, 600000); // 10 minutes
 
+      // Track marker detection for proper exit code handling
+      let markerDetected = false;
+      let detectedExitCode = 0;
+
       bashProcess.on("error", (error) => {
         clearTimeout(inactivityTimeoutId);
         clearTimeout(maxTimeoutId);
         cleanup();
-        
+
         const errorResult = `Error spawning process: ${error.message}\nExit code: 1`;
-        
+
         // Store error result
         const processInfo = processes.get(processId);
         if (processInfo) {
@@ -216,7 +226,7 @@ server.registerTool(
           processInfo.result = errorResult;
           processInfo.bashProcess = undefined; // Clear process reference
         }
-        
+
         resolve({
           content: [{
             type: "text" as const,
@@ -227,14 +237,16 @@ server.registerTool(
 
       // Background process exit detection (event-driven, no polling)
       bashProcess.on("exit", (code) => {
+        // Use detectedExitCode if marker was found, otherwise use bash exit code
+        const exitCode = markerDetected ? detectedExitCode : (code ?? 1);
+        const result = formatResult(exitCode);
+
         const processInfo = processes.get(processId);
         if (processInfo) {
           const duration = Date.now() - processInfo.startTime;
-          const exitCode = code ?? 1;
-          const result = formatResult(exitCode);
-          
+
           console.error(`Background process ${processId} finished after ${duration}ms with exit code: ${exitCode}`);
-          
+
           // Store completion result
           processInfo.status = 'completed';
           processInfo.endTime = Date.now();
@@ -247,12 +259,11 @@ server.registerTool(
           clearTimeout(inactivityTimeoutId);
           clearTimeout(maxTimeoutId);
           cleanup();
-          
-          const exitCode = code ?? 1;
+
           resolve({
             content: [{
               type: "text" as const,
-              text: formatResult(exitCode)
+              text: result
             }]
           });
         }
@@ -261,48 +272,46 @@ server.registerTool(
       bashProcess.stdout.on("data", (data) => {
         const text = data.toString();
         stdout += text;
-        
+
         // Reset inactivity timer on any output
         resetInactivityTimer();
-        
+
         // Update current output in process info
         const processInfo = processes.get(processId);
         if (processInfo) {
           processInfo.currentStdout = stdout;
           processInfo.lastOutputTime = Date.now();
         }
-        
-        if (text.includes(uniqueMarker) && !completed) {
+
+        if (text.includes(uniqueMarker) && !markerDetected) {
           // Command completed, close stdin so bash can exit
+          markerDetected = true;
           bashProcess.stdin.end();
-          
+
           clearTimeout(inactivityTimeoutId);
           clearTimeout(maxTimeoutId);
+
           const parts = stdout.split(uniqueMarker);
           const exitCodeMatch = parts[1]?.match(/EXIT_CODE:(\d+)/);
-          const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1]) : 0;
-          
-          cleanup();
-          completed = true;
-          
-          const result = formatResult(exitCode);
-          
-          // Store completion result
-          const processInfo = processes.get(processId);
-          if (processInfo) {
-            processInfo.status = 'completed';
-            processInfo.endTime = Date.now();
-            processInfo.exitCode = exitCode;
-            processInfo.result = result;
-            processInfo.bashProcess = undefined; // Clear process reference
-          }
+          detectedExitCode = exitCodeMatch ? parseInt(exitCodeMatch[1]) : 0;
 
-          resolve({
-            content: [{
-              type: "text" as const,
-              text: result
-            }]
-          });
+          // For synchronous commands, let the exit handler format the final result
+          // to ensure stderr is fully received. For backgrounded commands, store now.
+          if (completed) {
+            // Process was already backgrounded, format and store result now
+            const result = formatResult(detectedExitCode);
+            const processInfo = processes.get(processId);
+            if (processInfo) {
+              processInfo.status = 'completed';
+              processInfo.endTime = Date.now();
+              processInfo.exitCode = detectedExitCode;
+              processInfo.result = result;
+              processInfo.currentStdout = parts[0].trim();
+              processInfo.bashProcess = undefined;
+            }
+            cleanup();
+          }
+          // If not completed (synchronous), let exit handler finish
         }
       });
 
@@ -574,8 +583,9 @@ server.registerTool(
     console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
-      const bashProcess = spawn("docker", ["exec", "-i", CONTAINER_NAME, "bash"], {
-        stdio: ["pipe", "pipe", "pipe"]
+      const bashProcess = spawn("bash", [], {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: "/app/workspace"
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -795,8 +805,9 @@ server.registerTool(
     console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
-      const bashProcess = spawn("docker", ["exec", "-i", CONTAINER_NAME, "bash"], {
-        stdio: ["pipe", "pipe", "pipe"]
+      const bashProcess = spawn("bash", [], {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: "/app/workspace"
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -931,10 +942,10 @@ server.registerTool(
 
       // Escape pattern for safe shell usage
       const escapedPattern = pattern.replace(/'/g, "'\"'\"'");
-      
+
       // Build grep command with options
-      let grepCommand = "grep -rn"; // recursive, show line numbers
-      
+      let grepCommand = "grep -E -rn"; // extended regex, recursive, show line numbers
+
       if (caseInsensitive) {
         grepCommand += "i"; // case insensitive
       }
@@ -988,8 +999,9 @@ server.registerTool(
     console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
-      const bashProcess = spawn("docker", ["exec", "-i", CONTAINER_NAME, "bash"], {
-        stdio: ["pipe", "pipe", "pipe"]
+      const bashProcess = spawn("bash", [], {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: "/app/workspace"
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -1172,8 +1184,9 @@ server.registerTool(
     console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
-      const bashProcess = spawn("docker", ["exec", "-i", CONTAINER_NAME, "bash"], {
-        stdio: ["pipe", "pipe", "pipe"]
+      const bashProcess = spawn("bash", [], {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: "/app/workspace"
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -1368,8 +1381,9 @@ server.registerTool(
     console.error(`Replacing "${oldString.substring(0, 100)}${oldString.length > 100 ? '...' : ''}" with "${newString.substring(0, 100)}${newString.length > 100 ? '...' : ''}"`);
 
     return new Promise((resolve) => {
-      const bashProcess = spawn("docker", ["exec", "-i", CONTAINER_NAME, "bash"], {
-        stdio: ["pipe", "pipe", "pipe"]
+      const bashProcess = spawn("bash", [], {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: "/app/workspace"
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -1586,37 +1600,179 @@ except Exception as e:
   }
 );
 
-async function validateContainer(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const checkProcess = spawn("docker", ["inspect", CONTAINER_NAME], {
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    
-    checkProcess.on("exit", (code) => {
-      resolve(code === 0);
-    });
-    
-    checkProcess.on("error", () => {
-      resolve(false);
-    });
-  });
-}
-
 async function main() {
-  console.error(`Docker MCP Server starting with container: ${CONTAINER_NAME}`);
-  
-  // Validate container exists
-  const containerExists = await validateContainer();
-  if (!containerExists) {
-    console.error(`Error: Docker container '${CONTAINER_NAME}' not found or not running.`);
-    console.error(`Please ensure the container exists and is running.`);
-    console.error(`You can start it with: docker-compose up -d`);
-    process.exit(1);
-  }
-  
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error(`Docker MCP Server started successfully with container: ${CONTAINER_NAME}`);
+  console.error('='.repeat(60));
+  console.error('Docker MCP Server Starting');
+  console.error('='.repeat(60));
+  console.error(`Port: ${PORT}`);
+  console.error(`Auth Token: ${AUTH_TOKEN}`);
+  console.error('='.repeat(60));
+
+  // Map to store transports by session ID
+  const transports: Record<string, StreamableHTTPServerTransport> = {};
+
+  // Helper function to parse request body
+  const parseBody = (req: http.IncomingMessage): Promise<unknown> => {
+    return new Promise((resolve, reject) => {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        try {
+          if (body) {
+            resolve(JSON.parse(body));
+          } else {
+            resolve(undefined);
+          }
+        } catch (error) {
+          reject(new Error('Invalid JSON in request body'));
+        }
+      });
+      req.on('error', reject);
+    });
+  };
+
+  // Create HTTP server with authentication middleware
+  const httpServer = http.createServer(async (req, res) => {
+    console.error(`[DEBUG] HTTP request received: ${req.method} ${req.url}`);
+
+    // CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id');
+    res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
+
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    // Check bearer token authentication
+    const authHeader = req.headers['authorization'];
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+
+    if (token !== AUTH_TOKEN) {
+      console.error(`Authentication failed: Invalid token from ${req.socket.remoteAddress}`);
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized: Invalid or missing bearer token' }));
+      return;
+    }
+
+    // Handle MCP requests
+    try {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+      // For POST requests, parse the body
+      let parsedBody: unknown = undefined;
+      if (req.method === 'POST') {
+        parsedBody = await parseBody(req);
+      }
+
+      let transport: StreamableHTTPServerTransport;
+
+      if (sessionId && transports[sessionId]) {
+        // Reuse existing transport for this session
+        console.error(`Request for existing session: ${sessionId}`);
+        transport = transports[sessionId];
+      } else if (!sessionId && req.method === 'POST' && isInitializeRequest(parsedBody)) {
+        // New initialization request - create new transport
+        console.error('New initialization request - creating transport');
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (newSessionId) => {
+            console.error(`Session initialized with ID: ${newSessionId}`);
+            transports[newSessionId] = transport;
+          }
+        });
+
+        // Set up onclose handler to clean up transport when closed
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid && transports[sid]) {
+            console.error(`Transport closed for session ${sid}, removing from transports map`);
+            delete transports[sid];
+          }
+        };
+
+        // Connect the transport to the MCP server BEFORE handling the request
+        console.error('[DEBUG] Connecting transport to server...');
+        await server.connect(transport);
+        console.error('[DEBUG] Transport connected, handling request...');
+
+        // Handle the request with the parsed body
+        await transport.handleRequest(req, res, parsedBody);
+        console.error('[DEBUG] handleRequest completed');
+        return;
+      } else {
+        // Invalid request - no session ID or not initialization request
+        console.error(`Invalid request: method=${req.method}, sessionId=${sessionId}, isInit=${parsedBody ? isInitializeRequest(parsedBody) : false}`);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'Bad Request: No valid session ID provided or not an initialization request',
+          },
+          id: null,
+        }));
+        return;
+      }
+
+      // Handle the request with existing transport
+      await transport.handleRequest(req, res, parsedBody);
+    } catch (error) {
+      console.error('Error handling MCP request:', error);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal server error',
+          },
+          id: null,
+        }));
+      }
+    }
+  });
+
+  // Start HTTP server
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.error('='.repeat(60));
+    console.error(`Docker MCP Server started successfully`);
+    console.error(`Listening on: http://0.0.0.0:${PORT}`);
+    console.error(`Working directory: /app/workspace`);
+    console.error('='.repeat(60));
+    console.error('');
+    console.error('To connect, use the following configuration:');
+    console.error(JSON.stringify({
+      url: `http://localhost:${PORT}`,
+      headers: {
+        Authorization: `Bearer ${AUTH_TOKEN}`
+      }
+    }, null, 2));
+    console.error('='.repeat(60));
+  });
+
+  // Handle server shutdown
+  process.on('SIGINT', async () => {
+    console.error('Shutting down server...');
+    // Close all active transports
+    for (const sessionId in transports) {
+      try {
+        console.error(`Closing transport for session ${sessionId}`);
+        await transports[sessionId].close();
+        delete transports[sessionId];
+      } catch (error) {
+        console.error(`Error closing transport for session ${sessionId}:`, error);
+      }
+    }
+    console.error('Server shutdown complete');
+    process.exit(0);
+  });
 }
 
 main().catch((error) => {

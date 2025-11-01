@@ -8,8 +8,44 @@ import { spawn, ChildProcess } from "child_process";
 import { Command } from "commander";
 import http from "http";
 import { randomUUID } from "crypto";
-import { readFile } from "fs/promises";
+import { readFile, mkdir } from "fs/promises";
 import { ChildServerManager, type ServerConfig } from "./childServerManager.js";
+import { AsyncLocalStorage } from "async_hooks";
+
+// Request context storage for execution ID scoping
+interface RequestContext {
+  executionId?: string;
+}
+
+const requestContext = new AsyncLocalStorage<RequestContext>();
+
+/**
+ * Get the workspace path for the current request.
+ * If an Execution-Id header was provided, returns /app/workspace/<execution-id>
+ * Otherwise returns the default /app/workspace
+ */
+function getWorkspacePath(): string {
+  const context = requestContext.getStore();
+  const executionId = context?.executionId;
+
+  if (executionId) {
+    return `/app/workspace/${executionId}`;
+  }
+
+  return "/app/workspace";
+}
+
+/**
+ * Ensure the workspace directory exists for the current request
+ */
+async function ensureWorkspaceExists(): Promise<void> {
+  const workspacePath = getWorkspacePath();
+  try {
+    await mkdir(workspacePath, { recursive: true });
+  } catch (error) {
+    console.error(`Warning: Failed to create workspace directory ${workspacePath}:`, error);
+  }
+}
 
 // Parse CLI arguments
 const program = new Command();
@@ -58,7 +94,7 @@ server.registerTool(
   "execute_command",
   {
     title: "Execute Docker Command",
-    description: "Execute a shell command inside a Docker container",
+    description: "Execute a shell command inside a Docker container.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       command: z.string().describe("The shell command to execute in the container"),
       rationale: z.string().describe("Explanation of why this command is being executed"),
@@ -66,14 +102,18 @@ server.registerTool(
     }
   },
   async ({ command, rationale, maxWaitTime = 20 }) => {
-    return new Promise((resolve) => {
-      console.error(`Executing command: ${command}`);
-      console.error(`Rationale: ${rationale}`);
+    // Ensure workspace directory exists before executing command
+    await ensureWorkspaceExists();
 
+    const workspacePath = getWorkspacePath();
+    console.error(`Executing command in ${workspacePath}: ${command}`);
+    console.error(`Rationale: ${rationale}`);
+
+    return new Promise((resolve) => {
       const processId = generateProcessId();
       const bashProcess = spawn("bash", [], {
         stdio: ["pipe", "pipe", "pipe"],
-        cwd: "/app/workspace"
+        cwd: workspacePath
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -576,7 +616,7 @@ server.registerTool(
   "file_ls",
   {
     title: "List Directory Contents in Docker Container",
-    description: "Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You can optionally provide an array of glob patterns to ignore with the ignore parameter.",
+    description: "Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You can optionally provide an array of glob patterns to ignore with the ignore parameter.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       path: z.string().optional().default(".").describe("The directory path to list (default: current directory)"),
       rationale: z.string().describe("Explanation of why you need to list this directory"),
@@ -584,13 +624,16 @@ server.registerTool(
     }
   },
   async ({ path = ".", rationale, ignore = [] }) => {
+    await ensureWorkspaceExists();
+    const workspacePath = getWorkspacePath();
+
     console.error(`Listing directory: ${path}${ignore.length ? ` (ignoring: ${ignore.join(', ')})` : ''}`);
     console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
       const bashProcess = spawn("bash", [], {
         stdio: ["pipe", "pipe", "pipe"],
-        cwd: "/app/workspace"
+        cwd: workspacePath
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -795,7 +838,7 @@ server.registerTool(
   "file_grep",
   {
     title: "Search Files in Docker Container",
-    description: "Search for patterns in files inside the Docker container using grep",
+    description: "Search for patterns in files inside the Docker container using grep.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       pattern: z.string().describe("The search pattern (supports regex)"),
       rationale: z.string().describe("Explanation of why you need to search for this pattern"),
@@ -806,13 +849,16 @@ server.registerTool(
     }
   },
   async ({ pattern, rationale, path = ".", include, caseInsensitive = false, maxResults = 100 }) => {
+    await ensureWorkspaceExists();
+    const workspacePath = getWorkspacePath();
+
     console.error(`Searching for pattern: ${pattern} in ${path}${include ? ` (include: ${include})` : ''}`);
     console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
       const bashProcess = spawn("bash", [], {
         stdio: ["pipe", "pipe", "pipe"],
-        cwd: "/app/workspace"
+        cwd: workspacePath
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -992,7 +1038,7 @@ server.registerTool(
   "file_write",
   {
     title: "Write File to Docker Container",
-    description: "Create or overwrite a file inside the Docker container with the provided content.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before writing to it, even if you intend to completely overwrite it. This ensures you understand the current state and context of the file.",
+    description: "Create or overwrite a file inside the Docker container with the provided content.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before writing to it, even if you intend to completely overwrite it. This ensures you understand the current state and context of the file.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       filePath: z.string().describe("The path to the file to write (relative to /app in container)"),
       content: z.string().describe("The content to write to the file"),
@@ -1000,13 +1046,16 @@ server.registerTool(
     }
   },
   async ({ filePath, content, rationale }) => {
+    await ensureWorkspaceExists();
+    const workspacePath = getWorkspacePath();
+
     console.error(`Writing file: ${filePath} (${content.length} characters)`);
     console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
       const bashProcess = spawn("bash", [], {
         stdio: ["pipe", "pipe", "pipe"],
-        cwd: "/app/workspace"
+        cwd: workspacePath
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -1176,7 +1225,7 @@ server.registerTool(
   "file_read",
   {
     title: "Read File from Docker Container",
-    description: "Reads a file from the local filesystem. You can access any file directly by using this tool.\nAssume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The filePath parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Any lines longer than 2000 characters will be truncated\n- Results are returned using cat -n format, with line numbers starting at 1\n- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.",
+    description: "Reads a file from the local filesystem. You can access any file directly by using this tool.\nAssume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The filePath parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Any lines longer than 2000 characters will be truncated\n- Results are returned using cat -n format, with line numbers starting at 1\n- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       filePath: z.string().describe("The path to the file to read (relative to /app in container)"),
       rationale: z.string().describe("Explanation of why you need to read this file"),
@@ -1185,13 +1234,16 @@ server.registerTool(
     }
   },
   async ({ filePath, rationale, offset = 0, limit = 2000 }) => {
+    await ensureWorkspaceExists();
+    const workspacePath = getWorkspacePath();
+
     console.error(`Reading file: ${filePath} (offset: ${offset}, limit: ${limit})`);
     console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
       const bashProcess = spawn("bash", [], {
         stdio: ["pipe", "pipe", "pipe"],
-        cwd: "/app/workspace"
+        cwd: workspacePath
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -1362,7 +1414,7 @@ server.registerTool(
   "file_edit",
   {
     title: "Edit File in Docker Container",
-    description: "Performs exact string replacements in files.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before editing it. This ensures you have the exact text to match and understand the file's current state.\n\nUsage:\n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the oldString or newString.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.",
+    description: "Performs exact string replacements in files.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before editing it. This ensures you have the exact text to match and understand the file's current state.\n\nUsage:\n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the oldString or newString.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       filePath: z.string().describe("The path to the file to edit (relative to /app in container)"),
       oldString: z.string().describe("The exact text to replace"),
@@ -1381,6 +1433,9 @@ server.registerTool(
       };
     }
 
+    await ensureWorkspaceExists();
+    const workspacePath = getWorkspacePath();
+
     console.error(`Editing file: ${filePath}`);
     console.error(`Rationale: ${rationale}`);
     console.error(`Replacing "${oldString.substring(0, 100)}${oldString.length > 100 ? '...' : ''}" with "${newString.substring(0, 100)}${newString.length > 100 ? '...' : ''}"`);
@@ -1388,7 +1443,7 @@ server.registerTool(
     return new Promise((resolve) => {
       const bashProcess = spawn("bash", [], {
         stdio: ["pipe", "pipe", "pipe"],
-        cwd: "/app/workspace"
+        cwd: workspacePath
       });
 
       if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
@@ -1785,6 +1840,12 @@ async function main() {
     // Handle MCP requests
     try {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      const executionId = req.headers['execution-id'] as string | undefined;
+
+      // Log execution ID if provided
+      if (executionId) {
+        console.error(`[Execution-Id] Request scoped to workspace: /app/workspace/${executionId}`);
+      }
 
       // For POST requests, parse the body
       let parsedBody: unknown = undefined;
@@ -1823,8 +1884,10 @@ async function main() {
         await server.connect(transport);
         console.error('[DEBUG] Transport connected, handling request...');
 
-        // Handle the request with the parsed body
-        await transport.handleRequest(req, res, parsedBody);
+        // Handle the request with the parsed body in the execution context
+        await requestContext.run({ executionId }, async () => {
+          await transport.handleRequest(req, res, parsedBody);
+        });
         console.error('[DEBUG] handleRequest completed');
         return;
       } else {
@@ -1842,8 +1905,10 @@ async function main() {
         return;
       }
 
-      // Handle the request with existing transport
-      await transport.handleRequest(req, res, parsedBody);
+      // Handle the request with existing transport in the execution context
+      await requestContext.run({ executionId }, async () => {
+        await transport.handleRequest(req, res, parsedBody);
+      });
     } catch (error) {
       console.error('Error handling MCP request:', error);
       if (!res.headersSent) {
@@ -1865,7 +1930,7 @@ async function main() {
     console.error('='.repeat(60));
     console.error(`Docker MCP Server started successfully`);
     console.error(`Listening on: http://0.0.0.0:${PORT}`);
-    console.error(`Working directory: /app/workspace`);
+    console.error(`Working directory: /app/workspace (scoped by Execution-Id header)`);
     console.error('='.repeat(60));
     console.error('');
     console.error('To connect, use the following configuration:');

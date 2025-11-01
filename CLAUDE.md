@@ -177,6 +177,48 @@ The server requires bearer token authentication on all requests:
 - Required in `Authorization` header: `Bearer <token>`
 - Displayed in startup logs with connection configuration
 
+## Workspace Scoping (Execution-Id)
+
+The server supports workspace isolation through an optional `Execution-Id` header. This allows multiple clients or sessions to maintain separate workspaces within the same container.
+
+### How It Works
+
+**Without Execution-Id:**
+- All operations execute in `/app/workspace` (default)
+- Files and commands use the shared workspace
+
+**With Execution-Id:**
+- Set the `Execution-Id` header on HTTP requests
+- All operations are automatically scoped to `/app/workspace/<execution-id>`
+- The scoped directory is created automatically on first use
+- Each execution ID gets its own isolated workspace
+
+### Example Usage
+
+```bash
+# Request with Execution-Id header
+curl -X POST http://localhost:3000 \
+  -H "Authorization: Bearer <token>" \
+  -H "Execution-Id: my-session-123" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "method": "tools/call", ...}'
+```
+
+### Affected Operations
+
+All workspace operations respect the Execution-Id scoping:
+- **Command execution**: `execute_command` runs in scoped directory
+- **File operations**: `file_read`, `file_write`, `file_edit` operate on scoped paths
+- **Directory operations**: `file_ls` lists scoped directory contents
+- **Search operations**: `file_grep` searches within scoped workspace
+
+### Use Cases
+
+- **Multi-tenant environments**: Isolate different users or projects
+- **Parallel testing**: Run tests in isolated environments simultaneously
+- **Session management**: Maintain separate state for different client sessions
+- **CI/CD pipelines**: Separate workspace for each build/deployment
+
 ## Key Implementation Details
 
 ### TypeScript Configuration
@@ -219,6 +261,17 @@ To connect to the MCP server, clients need:
   "url": "http://localhost:3000",
   "headers": {
     "Authorization": "Bearer <token-from-logs>"
+  }
+}
+```
+
+**Optional: Add workspace scoping**
+```json
+{
+  "url": "http://localhost:3000",
+  "headers": {
+    "Authorization": "Bearer <token-from-logs>",
+    "Execution-Id": "unique-session-id"
   }
 }
 ```

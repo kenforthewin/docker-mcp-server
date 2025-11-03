@@ -104,9 +104,11 @@ Create a file named `mcp-servers.json` in the repository root (same directory as
 
 Tools from child servers are namespaced to avoid conflicts:
 - **Native tools**: `execute_command`, `file_read`, etc. (unchanged)
-- **Child server tools**: `serverName:toolName`
-  - Example: `playwright:screenshot`, `playwright:navigate`
-  - Example: `filesystem:read_file`, `filesystem:write_file`
+- **Child server tools**: `serverName__toolName` (double underscore separator)
+  - Example: `playwright__screenshot`, `playwright__navigate`
+  - Example: `filesystem__read_file`, `filesystem__write_file`
+
+**Note**: The double underscore (`__`) separator is used to comply with MCP tool name requirements (`^[a-zA-Z0-9_-]{1,128}$`).
 
 ### How It Works
 

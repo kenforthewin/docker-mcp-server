@@ -33,5 +33,4 @@ RUN mkdir -p /app/workspace
 # Expose MCP server port
 EXPOSE 3000
 
-# Run the MCP server
-CMD ["node", "dist/index.js", "--port", "3000", "--token", "6caaf87b-5550-4224-9d58-7035c40d0694"]
+CMD ["node", "dist/index.js", "--port", "3000"]

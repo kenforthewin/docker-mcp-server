@@ -292,6 +292,10 @@ server.registerTool(
 
           console.error(`Background process ${processId} finished after ${duration}ms with exit code: ${exitCode}`);
 
+          // Debug log final result
+          const truncatedResult = result.length > 500 ? result.substring(0, 500) + '... (truncated)' : result;
+          console.error(`[DEBUG] Process ${processId} Final Result: ${JSON.stringify(truncatedResult)}`);
+
           // Store completion result
           processInfo.status = 'completed';
           processInfo.endTime = Date.now();
@@ -317,6 +321,10 @@ server.registerTool(
       bashProcess.stdout.on("data", (data) => {
         const text = data.toString();
         stdout += text;
+
+        // Debug log for stdout
+        const truncatedText = text.length > 500 ? text.substring(0, 500) + '... (truncated)' : text;
+        console.error(`[DEBUG] Process ${processId} STDOUT: ${JSON.stringify(truncatedText)}`);
 
         // Reset inactivity timer on any output
         resetInactivityTimer();
@@ -361,8 +369,13 @@ server.registerTool(
       });
 
       bashProcess.stderr.on("data", (data) => {
-        stderr += data.toString();
-        
+        const text = data.toString();
+        stderr += text;
+
+        // Debug log for stderr
+        const truncatedText = text.length > 500 ? text.substring(0, 500) + '... (truncated)' : text;
+        console.error(`[DEBUG] Process ${processId} STDERR: ${JSON.stringify(truncatedText)}`);
+
         // Reset inactivity timer on any output
         resetInactivityTimer();
         
@@ -377,7 +390,7 @@ server.registerTool(
       // Handle background commands properly
       const isBackgroundCommand = command.trim().endsWith('&');
       let commandWithMarker;
-      
+
       if (isBackgroundCommand) {
         // For background commands, we need to capture the PID and wait for completion differently
         commandWithMarker = `${command} echo "${uniqueMarker}EXIT_CODE:$?"\n`;
@@ -385,7 +398,8 @@ server.registerTool(
         // For regular commands, append the marker with semicolon
         commandWithMarker = `${command}; echo "${uniqueMarker}EXIT_CODE:$?"\n`;
       }
-      
+
+      console.error(`[DEBUG] Process ${processId} sending command to bash: ${JSON.stringify(command)}`);
       bashProcess.stdin.write(commandWithMarker);
       // Keep stdin open for potential future input (don't call bashProcess.stdin.end())
     });
@@ -1750,7 +1764,7 @@ async function registerAggregatedTools(): Promise<void> {
   // Register each aggregated tool with the main server
   for (const tool of aggregatedTools) {
     server.registerTool(
-      tool.name, // Already namespaced as "serverName:toolName"
+      tool.name, // Already namespaced as "serverName__toolName"
       {
         title: tool.name,
         description: tool.description,

@@ -327,9 +327,9 @@ export class ChildServerManager {
           // Convert JSON Schema to Zod schema shape
           const zodShape = jsonSchemaToZodShape(tool.inputSchema);
 
-          // Namespace the tool with server name
+          // Namespace the tool with server name (using __ separator to comply with MCP tool name regex ^[a-zA-Z0-9_-]{1,128}$)
           const namespacedTool: AggregatedTool = {
-            name: `${serverInfo.name}:${tool.name}`,
+            name: `${serverInfo.name}__${tool.name}`,
             description: `[${serverInfo.name}] ${tool.description}`,
             inputSchema: zodShape,
             _meta: {
@@ -359,16 +359,16 @@ export class ChildServerManager {
    * Route a tool call to the appropriate child server
    */
   async routeToolCall(toolName: string, args: any): Promise<any> {
-    // Parse namespaced tool name: "server-name:tool-name"
-    const colonIndex = toolName.indexOf(":");
-    if (colonIndex === -1) {
+    // Parse namespaced tool name: "server-name__tool-name" (using __ separator)
+    const separatorIndex = toolName.indexOf("__");
+    if (separatorIndex === -1) {
       throw new Error(
-        `Invalid tool name format: ${toolName}. Expected format: serverName:toolName`
+        `Invalid tool name format: ${toolName}. Expected format: serverName__toolName`
       );
     }
 
-    const serverName = toolName.substring(0, colonIndex);
-    const originalToolName = toolName.substring(colonIndex + 1);
+    const serverName = toolName.substring(0, separatorIndex);
+    const originalToolName = toolName.substring(separatorIndex + 2);
 
     const serverInfo = this.servers.get(serverName);
     if (!serverInfo || serverInfo.status !== "connected") {
@@ -395,7 +395,7 @@ export class ChildServerManager {
       return result;
     } catch (error: any) {
       console.error(
-        `[ChildServerManager] Error calling ${serverName}:${originalToolName}:`,
+        `[ChildServerManager] Error calling ${serverName}__${originalToolName}:`,
         error
       );
 
@@ -403,7 +403,7 @@ export class ChildServerManager {
         content: [
           {
             type: "text",
-            text: `Error calling ${serverName}:${originalToolName}: ${error.message}`,
+            text: `Error calling ${serverName}__${originalToolName}: ${error.message}`,
           },
         ],
         isError: true,

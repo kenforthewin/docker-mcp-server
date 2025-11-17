@@ -1,4 +1,4 @@
-FROM node:current-bookworm
+FROM node:current-trixie
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -6,14 +6,28 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     jq \
     python3 \
+    python3-venv \
+    ripgrep \
+    build-essential \
+    wget \
+    libssl-dev \
+    zlib1g-dev \
+    uuid-dev \
+    libsqlite3-dev \
+    libffi-dev \
+    libbz2-dev \
+    libexpat1-dev \
+    liblzma-dev \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://get.docker.com | sh
 
 # Set up working directory
 WORKDIR /app
 
 # Install Playwright with dependencies
-RUN npm install -D @playwright/test@latest
-RUN npx playwright install --with-deps
+# RUN npm install -D @playwright/test@latest
+# RUN npx playwright install --with-deps
 
 # Copy MCP server source code
 COPY package*.json ./
@@ -31,6 +45,6 @@ RUN npm run build
 RUN mkdir -p /app/workspace
 
 # Expose MCP server port
-EXPOSE 3000
+EXPOSE 30000
 
-CMD ["node", "dist/index.js", "--port", "3000"]
+CMD ["node", "dist/index.js", "--port", "30000", "--token", "6caaf87b-5550-4224-9d58-7035c40d0694"]

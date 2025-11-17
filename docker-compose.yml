@@ -7,7 +7,8 @@ services:
       dockerfile: Dockerfile.debian
     container_name: mcp-container
     ports:
-      - "3000:3000"
+      - "30000:30000"
     volumes:
       - ./tmp:/app/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped

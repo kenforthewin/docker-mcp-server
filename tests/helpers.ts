@@ -45,14 +45,14 @@ export async function executeAndWait(
   client: Client,
   command: string,
   rationale: string,
-  maxWaitTime: number = 10
+  inactivityTimeout: number = 10
 ): Promise<string> {
   const result = await client.callTool({
     name: 'execute_command',
     arguments: {
       command,
       rationale,
-      maxWaitTime
+      inactivityTimeout
     }
   });
 

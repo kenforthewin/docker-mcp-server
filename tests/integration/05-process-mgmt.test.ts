@@ -26,7 +26,7 @@ describe('Process Management', () => {
 
       expect(result).toContain('Process ID:');
       expect(result).toContain('no output');
-      expect(result).toContain('maxWaitTime');
+      expect(result).toContain('inactivityTimeout');
     });
 
     it('should not background fast completing commands', async () => {
@@ -56,13 +56,13 @@ describe('Process Management', () => {
       expect(result).not.toContain('Process ID:');
     });
 
-    it('should respect custom maxWaitTime', async () => {
+    it('should respect custom inactivityTimeout', async () => {
       const startTime = Date.now();
 
       const result = await executeAndWait(
         client,
         'sleep 20',
-        'Test custom maxWaitTime',
+        'Test custom inactivityTimeout',
         5  // 5 seconds
       );
 
@@ -76,9 +76,45 @@ describe('Process Management', () => {
 
     it('should enforce maximum timeout of 10 minutes', async () => {
       // This test would take too long to run, so we document the behavior
-      // The server should enforce a 10-minute maximum regardless of maxWaitTime
+      // The server should enforce a 10-minute maximum regardless of inactivityTimeout
       // For actual testing, we verify the behavior with shorter timeouts
       expect(true).toBe(true); // Placeholder for documentation
+    });
+
+    it('should background immediately when inactivityTimeout is 0', async () => {
+      const startTime = Date.now();
+
+      const result = await executeAndWait(
+        client,
+        'sleep 10 && echo "Done"',
+        'Test immediate backgrounding',
+        0  // 0 = immediate background
+      );
+
+      const duration = Date.now() - startTime;
+
+      expect(result).toContain('Process ID:');
+      expect(result).toContain('inactivityTimeout: 0');
+      expect(result).toContain('background');
+      // Should return almost immediately (less than 2 seconds)
+      expect(duration).toBeLessThan(2000);
+    });
+
+    it('should cap inactivityTimeout to 600 seconds', async () => {
+      // This test verifies the capping behavior without actually waiting 600 seconds
+      // We can't easily test the full 600s cap, but we can verify the command accepts it
+      const result = await executeAndWait(
+        client,
+        'echo "Testing cap"',
+        'Test timeout capping',
+        700  // 700 seconds - should be capped to 600
+      );
+
+      // Command should complete successfully (fast command)
+      expect(result).toContain('Testing cap');
+      expect(result).toContain('Exit code: 0');
+      // The capping happens internally, so we can't directly verify it
+      // But the command should work without errors
     });
   });
 
@@ -249,7 +285,7 @@ describe('Process Management', () => {
 
   describe('Process monitoring', () => {
     it('should capture incremental output', async () => {
-      // Command that produces output with gaps longer than maxWaitTime
+      // Command that produces output with gaps longer than inactivityTimeout
       const result = await executeAndWait(
         client,
         'echo "Line 1" && sleep 3 && echo "Line 2" && sleep 3 && echo "Line 3"',

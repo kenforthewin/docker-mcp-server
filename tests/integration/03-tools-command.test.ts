@@ -136,6 +136,47 @@ describe('Command Execution Tools', () => {
 
       expect(result).toContain('Exit code: 0');
     });
+
+    it('should execute command with heredoc syntax (bash)', async () => {
+      const command = `cat <<'EOF'
+Hello from heredoc!
+This is line 2
+This is line 3
+EOF`;
+
+      const result = await executeAndWait(
+        client,
+        command,
+        'Test heredoc with cat command',
+        5
+      );
+
+      expect(result).toContain('Hello from heredoc!');
+      expect(result).toContain('This is line 2');
+      expect(result).toContain('This is line 3');
+      expect(result).toContain('Exit code: 0');
+    });
+
+    it('should execute Python script with heredoc syntax', async () => {
+      const command = `python3 - <<'PY'
+print("Hello from Python")
+print("Line 2")
+result = 5 + 3
+print(f"Result: {result}")
+PY`;
+
+      const result = await executeAndWait(
+        client,
+        command,
+        'Test heredoc with inline Python script',
+        5
+      );
+
+      expect(result).toContain('Hello from Python');
+      expect(result).toContain('Line 2');
+      expect(result).toContain('Result: 8');
+      expect(result).toContain('Exit code: 0');
+    });
   });
 
   describe('Long-running commands and backgrounding', () => {
@@ -377,10 +418,11 @@ describe('Command Execution Tools', () => {
     });
 
     it('should handle sending input without newline', async () => {
+      // Use same pattern as first test - read command waits for stdin
       const execResult = await executeAndWait(
         client,
-        'cat',
-        'Start cat process',
+        'read -r data && echo "Data: $data"',
+        'Start read process',
         2
       );
 
@@ -391,9 +433,9 @@ describe('Command Execution Tools', () => {
         name: 'send_input',
         arguments: {
           processId: processId!,
-          input: 'no newline',
+          input: 'test',
           rationale: 'Test no newline',
-          autoNewline: false
+          autoNewline: false  // This is what we're testing - no auto newline
         }
       });
 

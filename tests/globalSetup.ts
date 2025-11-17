@@ -2,7 +2,7 @@ import { execSync } from 'child_process';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 
-const TEST_PORT = 3000;
+const TEST_PORT = 30000;
 const MAX_STARTUP_WAIT = 60000; // 60 seconds
 const TEST_SERVER_URL = `http://localhost:${TEST_PORT}`;
 

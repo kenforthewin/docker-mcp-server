@@ -115,7 +115,7 @@ describe('Authentication', () => {
       const response = await fetch(TEST_SERVER_URL, {
         method: 'OPTIONS',
         headers: {
-          'Origin': 'http://localhost:3000',
+          'Origin': 'http://localhost:30000',
           'Access-Control-Request-Method': 'POST',
           'Access-Control-Request-Headers': 'Content-Type,Authorization'
         }

@@ -24,18 +24,18 @@ This is an **MCP (Model Context Protocol) Server** that runs entirely inside a D
 ### Core Components
 
 1. **MCP Server** (`src/index.ts`) - TypeScript server using `@modelcontextprotocol/sdk` with `StreamableHTTPServerTransport`
-2. **HTTP Transport** - Network-based communication on port 3000
+2. **HTTP Transport** - Network-based communication on port 30000
 3. **Bearer Token Auth** - Secure authentication for all requests
 4. **Docker Container** - Debian-based container with Node.js, Playwright, and the MCP server
 5. **Workspace Mount** - Host `./tmp` directory mounted to container `/app/workspace` for persistent file storage
 6. **Process Management** - Tracks background processes with unique IDs and timeouts
 
 ### Container Environment
-- **Base Image**: `node:current-bookworm` (Debian with current Node.js)
+- **Base Image**: `node:current-trixie` (Debian with current Node.js)
 - **Additional Tools**: git, xdg-utils, jq, python3, Playwright with dependencies
 - **Server Location**: `/app` (contains built MCP server code)
 - **Working Directory**: `/app/workspace` (mounted from host `./tmp`)
-- **Exposed Port**: 3000 (mapped to host port 3000)
+- **Exposed Port**: 30000 (mapped to host port 30000)
 - **Container Name**: `mcp-container`
 
 ### Architecture Changes from Previous Version
@@ -51,7 +51,7 @@ This is an **MCP (Model Context Protocol) Server** that runs entirely inside a D
 - Uses HTTP transport with bearer token auth
 - Commands execute directly (no docker exec overhead)
 - Container is self-contained and network-accessible
-- Accessible at `http://localhost:3000`
+- Accessible at `http://localhost:30000`
 
 ## MCP Tools Available
 
@@ -165,9 +165,12 @@ See `./mcp-servers.json.example` for a complete example configuration.
 
 ## Process Management System
 
-Commands run with intelligent timeout handling:
-- **Default timeout**: 20 seconds of inactivity before backgrounding
-- **Maximum timeout**: 10 minutes absolute limit
+Commands run with intelligent inactivity-based timeout handling:
+- **Default inactivity timeout**: 20 seconds of inactivity (no output) before backgrounding
+- **Inactivity timer**: Automatically resets whenever the command produces output
+- **Immediate backgrounding**: Set `inactivityTimeout: 0` to background immediately
+- **Maximum inactivity timeout**: Values above 600 seconds are automatically capped to 600
+- **Absolute maximum**: 10 minutes total execution time regardless of activity
 - **Process tracking**: Background processes get unique IDs for monitoring
 - **Smart waiting**: Based on output activity rather than fixed intervals
 
@@ -199,7 +202,7 @@ The server supports workspace isolation through an optional `Execution-Id` heade
 
 ```bash
 # Request with Execution-Id header
-curl -X POST http://localhost:3000 \
+curl -X POST http://localhost:30000 \
   -H "Authorization: Bearer <token>" \
   -H "Execution-Id: my-session-123" \
   -H "Content-Type: application/json" \
@@ -235,11 +238,11 @@ All workspace operations respect the Execution-Id scoping:
 3. Copies `mcp-servers.json` config file (if present) into container
 4. Runs `npm install` and `npm run build` inside container
 5. Creates `/app/workspace` directory
-6. Exposes port 3000
-7. Starts server with `node dist/index.js --port 3000`
+6. Exposes port 30000
+7. Starts server with `node dist/index.js --port 30000`
 
 ### Container Startup
-1. Server starts and binds to `0.0.0.0:3000`
+1. Server starts and binds to `0.0.0.0:30000`
 2. Generates authentication token (or uses provided token)
 3. Logs connection details including:
    - Port number
@@ -260,7 +263,7 @@ To connect to the MCP server, clients need:
 
 ```json
 {
-  "url": "http://localhost:3000",
+  "url": "http://localhost:30000",
   "headers": {
     "Authorization": "Bearer <token-from-logs>"
   }
@@ -270,7 +273,7 @@ To connect to the MCP server, clients need:
 **Optional: Add workspace scoping**
 ```json
 {
-  "url": "http://localhost:3000",
+  "url": "http://localhost:30000",
   "headers": {
     "Authorization": "Bearer <token-from-logs>",
     "Execution-Id": "unique-session-id"
@@ -303,7 +306,7 @@ The Docker container is self-contained and includes the MCP server:
 - Builds with server code included
 - Starts automatically with `docker-compose up`
 - Runs server process (`node dist/index.js`)
-- Exposes port 3000 for network access
+- Exposes port 30000 for network access
 - Workspace at `/app/workspace` persists via volume mount
 - Container restart requires rebuild to include code changes
 - Use `reset-docker.sh` for complete clean restart
@@ -312,13 +315,13 @@ The Docker container is self-contained and includes the MCP server:
 
 **Server won't start:**
 - Check logs: `npm run docker:logs`
-- Verify port 3000 is not in use on host
+- Verify port 30000 is not in use on host
 - Rebuild: `npm run docker:restart`
 
 **Can't connect to server:**
 - Verify container is running: `docker ps | grep mcp-container`
 - Check token in logs: `npm run docker:logs`
-- Ensure using correct URL: `http://localhost:3000`
+- Ensure using correct URL: `http://localhost:30000`
 - Verify bearer token in Authorization header
 
 **Code changes not reflected:**

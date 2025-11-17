@@ -19,19 +19,19 @@ interface RequestContext {
 
 const requestContext = new AsyncLocalStorage<RequestContext>();
 
+// HTTP Timeout Configuration Constants
+// These defaults accommodate the maximum command execution time (10 minutes)
+// with a safe buffer to ensure HTTP connections don't timeout prematurely
+const DEFAULT_HTTP_TIMEOUT = 15 * 60 * 1000; // 15 minutes (900,000ms)
+const DEFAULT_SOCKET_TIMEOUT = 15 * 60 * 1000; // 15 minutes (900,000ms)
+const DEFAULT_KEEP_ALIVE_TIMEOUT = 5000; // 5 seconds (Node.js default)
+
 /**
  * Get the workspace path for the current request.
- * If an Execution-Id header was provided, returns /app/workspace/<execution-id>
+ * If an Execution-Id header was provided, returns /app/workspace
  * Otherwise returns the default /app/workspace
  */
 function getWorkspacePath(): string {
-  const context = requestContext.getStore();
-  const executionId = context?.executionId;
-
-  if (executionId) {
-    return `/app/workspace/${executionId}`;
-  }
-
   return "/app/workspace";
 }
 
@@ -53,13 +53,17 @@ program
   .name('docker-mcp-server')
   .description('MCP server for Docker container execution')
   .version('1.0.0')
-  .option('-p, --port <port>', 'Port to listen on', '3000')
+  .option('-p, --port <port>', 'Port to listen on', '30000')
   .option('-t, --token <token>', 'Bearer token for authentication (auto-generated if not provided)')
+  .option('--http-timeout <ms>', 'HTTP request timeout in milliseconds', String(DEFAULT_HTTP_TIMEOUT))
+  .option('--socket-timeout <ms>', 'Socket inactivity timeout in milliseconds', String(DEFAULT_SOCKET_TIMEOUT))
   .parse();
 
 const options = program.opts();
 const PORT = parseInt(options.port, 10);
 const AUTH_TOKEN = options.token || randomUUID();
+const HTTP_TIMEOUT = parseInt(options.httpTimeout, 10);
+const SOCKET_TIMEOUT = parseInt(options.socketTimeout, 10);
 
 interface ProcessInfo {
   startTime: number;
@@ -73,7 +77,7 @@ interface ProcessInfo {
   currentStdout?: string;
   currentStderr?: string;
   lastOutputTime?: number;
-  maxWaitTime: number;
+  inactivityTimeout: number;
 }
 
 const processes = new Map<string, ProcessInfo>();
@@ -94,14 +98,20 @@ server.registerTool(
   "execute_command",
   {
     title: "Execute Docker Command",
-    description: "Execute a shell command inside a Docker container.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    description: "Execute a shell command inside a Docker container.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       command: z.string().describe("The shell command to execute in the container"),
       rationale: z.string().describe("Explanation of why this command is being executed"),
-      maxWaitTime: z.number().optional().describe("Maximum seconds to wait before returning to agent (default: 20)")
+      inactivityTimeout: z.number().optional().describe("Seconds of inactivity (no output) before backgrounding the process. Timer resets whenever the command produces output. Set to 0 to background immediately. (default: 20, max: 600)")
     }
   },
-  async ({ command, rationale, maxWaitTime = 20 }) => {
+  async ({ command, rationale, inactivityTimeout = 20 }) => {
+    // Validate and normalize inactivityTimeout
+    // Cap at 600 seconds (10 minutes, which is our hard maximum)
+    if (inactivityTimeout > 600) {
+      inactivityTimeout = 600;
+    }
+
     // Ensure workspace directory exists before executing command
     await ensureWorkspaceExists();
 
@@ -134,8 +144,20 @@ server.registerTool(
         bashProcess,
         status: 'running',
         lastOutputTime: Date.now(),
-        maxWaitTime
+        inactivityTimeout
       });
+
+      // Handle immediate backgrounding if inactivityTimeout is 0
+      if (inactivityTimeout === 0) {
+        console.error(`inactivityTimeout is 0, backgrounding immediately with ID: ${processId}`);
+        resolve({
+          content: [{
+            type: "text" as const,
+            text: `Command started in background (inactivityTimeout: 0).\nProcess ID: ${processId}\nUse check_process tool to monitor status.`
+          }]
+        });
+        return;
+      }
 
       let stdout = "";
       let stderr = "";
@@ -146,7 +168,7 @@ server.registerTool(
         let result = "";
         const cleanStdout = stdout.replace(new RegExp(`${uniqueMarker}.*`, 's'), '').trim();
         const cleanStderr = stderr.trim();
-        
+
         if (cleanStdout && cleanStderr) {
           result = `STDOUT:\n${cleanStdout}\n\nSTDERR:\n${cleanStderr}`;
         } else if (cleanStdout) {
@@ -160,7 +182,7 @@ server.registerTool(
             result = "Command executed with error (no output)";
           }
         }
-        
+
         result += `\nExit code: ${exitCode}`;
         return result;
       };
@@ -184,7 +206,7 @@ server.registerTool(
         if (!completed) {
           completed = true;
           const inactivityDuration = Date.now() - lastOutputTime;
-          console.error(`Command inactive for ${Math.floor(inactivityDuration/1000)}s (maxWaitTime: ${maxWaitTime}s), running in background with ID: ${processId}`);
+          console.error(`Command inactive for ${Math.floor(inactivityDuration/1000)}s (inactivityTimeout: ${inactivityTimeout}s), running in background with ID: ${processId}`);
           
           let result = "";
           if (stdout.trim() || stderr.trim()) {
@@ -200,7 +222,7 @@ server.registerTool(
             }
           }
           
-          result += `Command still running in background (no output for ${Math.floor(inactivityDuration/1000)}s, maxWaitTime: ${maxWaitTime}s).\nProcess ID: ${processId}\nUse check_process tool to monitor status.`;
+          result += `Command still running in background (no output for ${Math.floor(inactivityDuration/1000)}s, inactivityTimeout: ${inactivityTimeout}s).\nProcess ID: ${processId}\nUse check_process tool to monitor status.`;
 
           resolve({
             content: [{
@@ -214,7 +236,7 @@ server.registerTool(
       const resetInactivityTimer = () => {
         clearTimeout(inactivityTimeoutId);
         lastOutputTime = Date.now();
-        inactivityTimeoutId = setTimeout(handleInactivity, maxWaitTime * 1000); // maxWaitTime seconds of inactivity
+        inactivityTimeoutId = setTimeout(handleInactivity, inactivityTimeout * 1000); // inactivityTimeout seconds of inactivity
       };
 
       // Start inactivity timer
@@ -387,16 +409,27 @@ server.registerTool(
         }
       });
 
-      // Handle background commands properly
+      // Handle background commands and heredocs properly
       const isBackgroundCommand = command.trim().endsWith('&');
+      const hasHeredoc = /<<[-]?\s*['"]?\w+['"]?/.test(command);
       let commandWithMarker;
 
       if (isBackgroundCommand) {
         // For background commands, we need to capture the PID and wait for completion differently
+        // Don't redirect stdin for background commands - they may need it for send_input
         commandWithMarker = `${command} echo "${uniqueMarker}EXIT_CODE:$?"\n`;
+      } else if (hasHeredoc) {
+        // For heredoc commands, use newline (semicolon breaks heredoc syntax)
+        // Don't redirect stdin for heredocs - they provide their own stdin
+        commandWithMarker = `${command}\necho "${uniqueMarker}EXIT_CODE:$?"\n`;
       } else {
-        // For regular commands, append the marker with semicolon
-        commandWithMarker = `${command}; echo "${uniqueMarker}EXIT_CODE:$?"\n`;
+        // For regular commands: redirect stdin to /dev/null to prevent blocking on commands
+        // that try to read stdin (like rg, grep, cat without arguments).
+        // This is safe because:
+        // 1) Bash stdin stays open (so send_input still works for backgrounded processes)
+        // 2) The command itself gets /dev/null as stdin (so it doesn't block)
+        // 3) Interactive commands are automatically backgrounded (due to timeout), then send_input is used
+        commandWithMarker = `${command} </dev/null; echo "${uniqueMarker}EXIT_CODE:$?"\n`;
       }
 
       console.error(`[DEBUG] Process ${processId} sending command to bash: ${JSON.stringify(command)}`);
@@ -503,18 +536,18 @@ server.registerTool(
         const timeSinceLastOutput = now - lastOutput;
         const totalWaitTime = now - startWaitTime;
         
-        // Return if no output for maxWaitTime seconds OR we've waited 10 minutes total
-        const maxWaitMs = (currentProcessInfo.maxWaitTime || 20) * 1000;
+        // Return if no output for inactivityTimeout seconds OR we've waited 10 minutes total
+        const maxWaitMs = (currentProcessInfo.inactivityTimeout || 20) * 1000;
         if (timeSinceLastOutput >= maxWaitMs || totalWaitTime >= 600000) {
           const totalDuration = now - currentProcessInfo.startTime;
           const totalDurationSeconds = Math.floor(totalDuration / 1000);
           const inactivitySeconds = Math.floor(timeSinceLastOutput / 1000);
           const waitSeconds = Math.floor(totalWaitTime / 1000);
-          
-          const reason = totalWaitTime >= 600000 ? 
-            `maximum wait time (${waitSeconds}s)` : 
-            `no output for ${inactivitySeconds}s (maxWaitTime: ${currentProcessInfo.maxWaitTime}s)`;
-            
+
+          const reason = totalWaitTime >= 600000 ?
+            `maximum wait time (${waitSeconds}s)` :
+            `no output for ${inactivitySeconds}s (inactivityTimeout: ${currentProcessInfo.inactivityTimeout}s)`;
+
           console.error(`Process ${processId} still running after ${reason}`);
           
           let result = `Process Status: RUNNING\n`;
@@ -630,7 +663,7 @@ server.registerTool(
   "file_ls",
   {
     title: "List Directory Contents in Docker Container",
-    description: "Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You can optionally provide an array of glob patterns to ignore with the ignore parameter.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    description: "Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You can optionally provide an array of glob patterns to ignore with the ignore parameter.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       path: z.string().optional().default(".").describe("The directory path to list (default: current directory)"),
       rationale: z.string().describe("Explanation of why you need to list this directory"),
@@ -852,7 +885,7 @@ server.registerTool(
   "file_grep",
   {
     title: "Search Files in Docker Container",
-    description: "Search for patterns in files inside the Docker container using grep.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    description: "Search for patterns in files inside the Docker container using grep.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       pattern: z.string().describe("The search pattern (supports regex)"),
       rationale: z.string().describe("Explanation of why you need to search for this pattern"),
@@ -1052,7 +1085,7 @@ server.registerTool(
   "file_write",
   {
     title: "Write File to Docker Container",
-    description: "Create or overwrite a file inside the Docker container with the provided content.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before writing to it, even if you intend to completely overwrite it. This ensures you understand the current state and context of the file.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    description: "Create or overwrite a file inside the Docker container with the provided content.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before writing to it, even if you intend to completely overwrite it. This ensures you understand the current state and context of the file.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       filePath: z.string().describe("The path to the file to write (relative to /app in container)"),
       content: z.string().describe("The content to write to the file"),
@@ -1239,7 +1272,7 @@ server.registerTool(
   "file_read",
   {
     title: "Read File from Docker Container",
-    description: "Reads a file from the local filesystem. You can access any file directly by using this tool.\nAssume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The filePath parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Any lines longer than 2000 characters will be truncated\n- Results are returned using cat -n format, with line numbers starting at 1\n- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    description: "Reads a file from the local filesystem. You can access any file directly by using this tool.\nAssume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The filePath parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Any lines longer than 2000 characters will be truncated\n- Results are returned using cat -n format, with line numbers starting at 1\n- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       filePath: z.string().describe("The path to the file to read (relative to /app in container)"),
       rationale: z.string().describe("Explanation of why you need to read this file"),
@@ -1428,7 +1461,7 @@ server.registerTool(
   "file_edit",
   {
     title: "Edit File in Docker Container",
-    description: "Performs exact string replacements in files.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before editing it. This ensures you have the exact text to match and understand the file's current state.\n\nUsage:\n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the oldString or newString.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace/<execution-id>. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    description: "Performs exact string replacements in files.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before editing it. This ensures you have the exact text to match and understand the file's current state.\n\nUsage:\n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the oldString or newString.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
     inputSchema: {
       filePath: z.string().describe("The path to the file to edit (relative to /app in container)"),
       oldString: z.string().describe("The exact text to replace"),
@@ -1786,6 +1819,9 @@ async function main() {
   console.error('='.repeat(60));
   console.error(`Port: ${PORT}`);
   console.error(`Auth Token: ${AUTH_TOKEN}`);
+  console.error(`HTTP Timeout: ${HTTP_TIMEOUT}ms (${HTTP_TIMEOUT / 1000}s)`);
+  console.error(`Socket Timeout: ${SOCKET_TIMEOUT}ms (${SOCKET_TIMEOUT / 1000}s)`);
+  console.error('Note: HTTP timeouts safely accommodate max command execution time (600s)');
   console.error('='.repeat(60));
 
   // Initialize child MCP servers
@@ -1939,12 +1975,23 @@ async function main() {
     }
   });
 
+  // Configure HTTP server timeouts to accommodate long-running operations
+  httpServer.timeout = HTTP_TIMEOUT;
+  httpServer.requestTimeout = HTTP_TIMEOUT;
+  httpServer.keepAliveTimeout = DEFAULT_KEEP_ALIVE_TIMEOUT;
+
+  // Configure socket timeout for individual connections
+  httpServer.on('connection', (socket) => {
+    socket.setTimeout(SOCKET_TIMEOUT);
+  });
+
   // Start HTTP server
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.error('='.repeat(60));
     console.error(`Docker MCP Server started successfully`);
     console.error(`Listening on: http://0.0.0.0:${PORT}`);
     console.error(`Working directory: /app/workspace (scoped by Execution-Id header)`);
+    console.error(`Timeouts: HTTP=${HTTP_TIMEOUT / 1000}s, Socket=${SOCKET_TIMEOUT / 1000}s (accommodates 600s max command execution)`);
     console.error('='.repeat(60));
     console.error('');
     console.error('To connect, use the following configuration:');

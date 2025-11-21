@@ -1,4 +1,4 @@
-FROM node:current-trixie
+FROM node:24-trixie
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -26,8 +26,10 @@ RUN curl -fsSL https://get.docker.com | sh
 WORKDIR /app
 
 # Install Playwright with dependencies
-# RUN npm install -D @playwright/test@latest
-# RUN npx playwright install --with-deps
+RUN npm install -D @playwright/test@latest
+RUN npx playwright install --with-deps
+
+RUN echo 'alias python=python3' >> ~/.bashrc
 
 # Copy MCP server source code
 COPY package*.json ./
@@ -47,4 +49,4 @@ RUN mkdir -p /app/workspace
 # Expose MCP server port
 EXPOSE 30000
 
-CMD ["node", "dist/index.js", "--port", "30000", "--token", "6caaf87b-5550-4224-9d58-7035c40d0694"]
+CMD ["node", "dist/index.js", "--port", "30000"]

@@ -69,6 +69,37 @@ This is an **MCP (Model Context Protocol) Server** that runs entirely inside a D
 
 All file operations work within `/app/workspace` which is mounted from host `./tmp`.
 
+### Tool Filtering
+
+You can limit which native tools are available by setting the `ALLOWED_TOOLS` environment variable. This is useful for creating restricted contexts or security boundaries.
+
+**Usage:**
+```bash
+# Only expose specific tools (comma-separated list)
+ALLOWED_TOOLS=execute_command,file_read,file_ls npm run docker:up
+
+# Or set in docker-compose.yml environment section
+environment:
+  - ALLOWED_TOOLS=execute_command,file_read,file_write,file_edit
+```
+
+**Behavior:**
+- If `ALLOWED_TOOLS` is **not set**: All native tools are available (default)
+- If `ALLOWED_TOOLS` is **set**: Only the specified native tools will be registered
+- **Child server tools** are not affected by this filtering and remain available
+
+**Available Native Tools:**
+- `execute_command`
+- `check_process`
+- `send_input`
+- `file_read`
+- `file_write`
+- `file_edit`
+- `file_ls`
+- `file_grep`
+
+**Note:** Changes to `ALLOWED_TOOLS` require restarting the container with `npm run docker:restart`.
+
 ## MCP Server Aggregation
 
 This server acts as an **aggregator** that can run multiple child MCP servers inside the container and expose all their tools as a unified interface. This allows you to combine specialized MCP servers (like Playwright, filesystem, git, etc.) with the native tools.

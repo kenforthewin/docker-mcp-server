@@ -86,6 +86,25 @@ function generateProcessId(): string {
   return `proc_${Date.now()}_${Math.random().toString(36).substring(2)}`;
 }
 
+// Parse ALLOWED_TOOLS environment variable
+// If set, only these native tools will be registered
+// If not set, all native tools will be registered (default behavior)
+const ALLOWED_TOOLS_ENV = process.env.ALLOWED_TOOLS;
+const allowedTools: Set<string> | null = ALLOWED_TOOLS_ENV
+  ? new Set(ALLOWED_TOOLS_ENV.split(',').map(t => t.trim()).filter(t => t.length > 0))
+  : null;
+
+/**
+ * Check if a native tool should be registered based on ALLOWED_TOOLS environment variable.
+ * Returns true if ALLOWED_TOOLS is not set (register all) or if the tool is in the allowed list.
+ */
+function shouldRegisterTool(toolName: string): boolean {
+  if (allowedTools === null) {
+    return true; // No restriction, register all tools
+  }
+  return allowedTools.has(toolName);
+}
+
 const server = new McpServer({
   name: "docker-mcp-server",
   version: "1.0.0"
@@ -94,8 +113,9 @@ const server = new McpServer({
 // Child server manager for aggregating multiple MCP servers
 const childServerManager = new ChildServerManager();
 
-server.registerTool(
-  "execute_command",
+if (shouldRegisterTool("execute_command")) {
+  server.registerTool(
+    "execute_command",
   {
     title: "Execute Docker Command",
     description: "Execute a shell command inside a Docker container.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
@@ -438,9 +458,11 @@ server.registerTool(
     });
   }
 );
+}
 
-server.registerTool(
-  "check_process",
+if (shouldRegisterTool("check_process")) {
+  server.registerTool(
+    "check_process",
   {
     title: "Check Background Process",
     description: "Check the status of a background process by its ID",
@@ -591,9 +613,11 @@ server.registerTool(
     });
   }
 );
+}
 
-server.registerTool(
-  "send_input",
+if (shouldRegisterTool("send_input")) {
+  server.registerTool(
+    "send_input",
   {
     title: "Send Input to Process",
     description: "Send input to a running background process",
@@ -658,9 +682,11 @@ server.registerTool(
     }
   }
 );
+}
 
-server.registerTool(
-  "file_ls",
+if (shouldRegisterTool("file_ls")) {
+  server.registerTool(
+    "file_ls",
   {
     title: "List Directory Contents in Docker Container",
     description: "Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You can optionally provide an array of glob patterns to ignore with the ignore parameter.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
@@ -880,9 +906,11 @@ echo "${uniqueMarker}EXIT_CODE:0"
     });
   }
 );
+}
 
-server.registerTool(
-  "file_grep",
+if (shouldRegisterTool("file_grep")) {
+  server.registerTool(
+    "file_grep",
   {
     title: "Search Files in Docker Container",
     description: "Search for patterns in files inside the Docker container using grep.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
@@ -1080,9 +1108,11 @@ echo "${uniqueMarker}EXIT_CODE:$EXIT_CODE"
     });
   }
 );
+}
 
-server.registerTool(
-  "file_write",
+if (shouldRegisterTool("file_write")) {
+  server.registerTool(
+    "file_write",
   {
     title: "Write File to Docker Container",
     description: "Create or overwrite a file inside the Docker container with the provided content.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before writing to it, even if you intend to completely overwrite it. This ensures you understand the current state and context of the file.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
@@ -1267,9 +1297,11 @@ fi
     });
   }
 );
+}
 
-server.registerTool(
-  "file_read",
+if (shouldRegisterTool("file_read")) {
+  server.registerTool(
+    "file_read",
   {
     title: "Read File from Docker Container",
     description: "Reads a file from the local filesystem. You can access any file directly by using this tool.\nAssume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The filePath parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Any lines longer than 2000 characters will be truncated\n- Results are returned using cat -n format, with line numbers starting at 1\n- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
@@ -1456,9 +1488,11 @@ echo "${uniqueMarker}EXIT_CODE:0"
     });
   }
 );
+}
 
-server.registerTool(
-  "file_edit",
+if (shouldRegisterTool("file_edit")) {
+  server.registerTool(
+    "file_edit",
   {
     title: "Edit File in Docker Container",
     description: "Performs exact string replacements in files.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before editing it. This ensures you have the exact text to match and understand the file's current state.\n\nUsage:\n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the oldString or newString.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
@@ -1706,6 +1740,7 @@ except Exception as e:
     });
   }
 );
+}
 
 /**
  * Configuration format for MCP server aggregation

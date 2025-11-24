@@ -86,6 +86,26 @@ function generateProcessId(): string {
   return `proc_${Date.now()}_${Math.random().toString(36).substring(2)}`;
 }
 
+/**
+ * Truncate output that exceeds maxLength characters.
+ * Keeps the beginning (~80%) and end (~20%) of the output to preserve
+ * important context like errors at the start and exit codes at the end.
+ */
+function truncateOutput(output: string, maxLength: number = 30000): string {
+  if (output.length <= maxLength) {
+    return output;
+  }
+
+  const truncatedChars = output.length - maxLength;
+  const headLength = Math.floor(maxLength * 0.8);
+  const tailLength = maxLength - headLength;
+
+  const head = output.substring(0, headLength);
+  const tail = output.substring(output.length - tailLength);
+
+  return `${head}\n\n[... truncated ${truncatedChars} characters ...]\n\n${tail}`;
+}
+
 // Parse ALLOWED_TOOLS environment variable
 // If set, only these native tools will be registered
 // If not set, all native tools will be registered (default behavior)
@@ -247,7 +267,7 @@ if (shouldRegisterTool("execute_command")) {
           resolve({
             content: [{
               type: "text" as const,
-              text: result
+              text: truncateOutput(result)
             }]
           });
         }
@@ -287,7 +307,7 @@ if (shouldRegisterTool("execute_command")) {
           resolve({
             content: [{
               type: "text" as const,
-              text: result
+              text: truncateOutput(result)
             }]
           });
         }
@@ -338,11 +358,11 @@ if (shouldRegisterTool("execute_command")) {
           const truncatedResult = result.length > 500 ? result.substring(0, 500) + '... (truncated)' : result;
           console.error(`[DEBUG] Process ${processId} Final Result: ${JSON.stringify(truncatedResult)}`);
 
-          // Store completion result
+          // Store completion result (truncated for later retrieval via check_process)
           processInfo.status = 'completed';
           processInfo.endTime = Date.now();
           processInfo.exitCode = exitCode;
-          processInfo.result = result;
+          processInfo.result = truncateOutput(result);
           processInfo.bashProcess = undefined; // Clear process reference
         }
 
@@ -354,7 +374,7 @@ if (shouldRegisterTool("execute_command")) {
           resolve({
             content: [{
               type: "text" as const,
-              text: result
+              text: truncateOutput(result)
             }]
           });
         }
@@ -400,7 +420,7 @@ if (shouldRegisterTool("execute_command")) {
               processInfo.status = 'completed';
               processInfo.endTime = Date.now();
               processInfo.exitCode = detectedExitCode;
-              processInfo.result = result;
+              processInfo.result = truncateOutput(result);
               processInfo.currentStdout = parts[0].trim();
               processInfo.bashProcess = undefined;
             }
@@ -503,7 +523,7 @@ if (shouldRegisterTool("check_process")) {
       return {
         content: [{
           type: "text" as const,
-          text: result
+          text: truncateOutput(result)
         }]
       };
     }
@@ -547,7 +567,7 @@ if (shouldRegisterTool("check_process")) {
           resolve({
             content: [{
               type: "text" as const,
-              text: result
+              text: truncateOutput(result)
             }]
           });
           return;
@@ -598,7 +618,7 @@ if (shouldRegisterTool("check_process")) {
           resolve({
             content: [{
               type: "text" as const,
-              text: result
+              text: truncateOutput(result)
             }]
           });
           return;
@@ -703,54 +723,68 @@ if (shouldRegisterTool("file_ls")) {
     console.error(`Listing directory: ${path}${ignore.length ? ` (ignoring: ${ignore.join(', ')})` : ''}`);
     console.error(`Rationale: ${rationale}`);
 
+    // Default ignore patterns
+    const defaultIgnorePatterns = [
+      "node_modules/**",
+      ".git/**",
+      "__pycache__/**",
+      "dist/**",
+      "build/**",
+      "target/**",
+      ".next/**",
+      ".nuxt/**",
+      ".vscode/**",
+      ".idea/**",
+      "coverage/**",
+      ".cache/**",
+      "*.pyc",
+      ".DS_Store"
+    ];
+
     return new Promise((resolve) => {
-      const bashProcess = spawn("bash", [], {
+      // Build ripgrep arguments for file listing
+      const rgArgs = ["--files", "--sort=path"];
+
+      // Add default ignore patterns
+      for (const pattern of defaultIgnorePatterns) {
+        rgArgs.push("--glob", `!${pattern}`);
+      }
+
+      // Add custom ignore patterns
+      for (const pattern of ignore) {
+        rgArgs.push("--glob", `!${pattern}`);
+      }
+
+      rgArgs.push(path);
+
+      const rgProcess = spawn("rg", rgArgs, {
         stdio: ["pipe", "pipe", "pipe"],
         cwd: workspacePath
       });
 
-      if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
+      let stdout = "";
+      let stderr = "";
+
+      const timeoutId = setTimeout(() => {
+        rgProcess.kill();
         resolve({
           content: [{
             type: "text" as const,
-            text: "Error: Failed to create process streams\nExit code: 1"
+            text: "Error: List operation timed out\nExit code: 1"
           }]
         });
-        return;
-      }
+      }, 30000);
 
-      let stdout = "";
-      let stderr = "";
-      let completed = false;
-      const uniqueMarker = `__LS_END_${Date.now()}_${Math.random().toString(36).substring(2)}__`;
+      rgProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
 
-      const cleanup = () => {
-        if (!completed) {
-          completed = true;
-          bashProcess.stdout?.removeAllListeners("data");
-          bashProcess.stderr?.removeAllListeners("data");
-          bashProcess.removeAllListeners("error");
-          bashProcess.removeAllListeners("exit");
-        }
-      };
+      rgProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
 
-      const timeoutId = setTimeout(() => {
-        if (!completed) {
-          completed = true;
-          cleanup();
-          bashProcess.kill();
-          resolve({
-            content: [{
-              type: "text" as const,
-              text: "Error: List operation timed out\nExit code: 1"
-            }]
-          });
-        }
-      }, 30000); // 30 second timeout
-
-      bashProcess.on("error", (error) => {
+      rgProcess.on("error", (error) => {
         clearTimeout(timeoutId);
-        cleanup();
         resolve({
           content: [{
             type: "text" as const,
@@ -759,150 +793,104 @@ if (shouldRegisterTool("file_ls")) {
         });
       });
 
-      bashProcess.on("exit", (code) => {
-        if (!completed) {
-          clearTimeout(timeoutId);
-          cleanup();
-          completed = true;
-          
-          const exitCode = code ?? 1;
-          let result = "";
-          
-          if (stdout.trim() || stderr.trim()) {
-            const cleanStdout = stdout.replace(new RegExp(`${uniqueMarker}.*`, 's'), '').trim();
-            const cleanStderr = stderr.trim();
-            
-            if (exitCode === 0) {
-              result = cleanStdout || "Directory is empty";
-            } else if (cleanStderr) {
-              result = cleanStderr;
-            } else if (cleanStdout) {
-              result = cleanStdout;
-            }
-          }
-          
-          if (exitCode !== 0) {
-            result = result || "List operation failed";
-            result += `\nExit code: ${exitCode}`;
-          }
-          
+      rgProcess.on("close", (code) => {
+        clearTimeout(timeoutId);
+
+        // Check for errors
+        if (code && code > 1) {
           resolve({
             content: [{
               type: "text" as const,
-              text: result
+              text: stderr.trim() || `Error: Directory ${path} not found\nExit code: ${code}`
             }]
           });
+          return;
         }
-      });
 
-      bashProcess.stdout.on("data", (data) => {
-        const text = data.toString();
-        stdout += text;
-        
-        if (text.includes(uniqueMarker) && !completed) {
-          bashProcess.stdin.end();
-          
-          clearTimeout(timeoutId);
-          const parts = stdout.split(uniqueMarker);
-          const exitCodeMatch = parts[1]?.match(/EXIT_CODE:(\d+)/);
-          const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1]) : 0;
-          
-          cleanup();
-          completed = true;
-          
-          let result = parts[0].trim();
-          const cleanStderr = stderr.trim();
-          
-          if (exitCode === 0) {
-            result = result || "Directory is empty";
-            resolve({
-              content: [{
-                type: "text" as const,
-                text: result
-              }]
-            });
-          } else {
-            result = cleanStderr || result || "List operation failed";
-            result += `\nExit code: ${exitCode}`;
-            
-            resolve({
-              content: [{
-                type: "text" as const,
-                text: result
-              }]
-            });
+        // Parse file list
+        const files = stdout.trim().split('\n').filter(f => f.length > 0);
+
+        if (files.length === 0) {
+          resolve({
+            content: [{
+              type: "text" as const,
+              text: "Directory is empty"
+            }]
+          });
+          return;
+        }
+
+        // Build tree structure
+        interface TreeNode {
+          name: string;
+          isDir: boolean;
+          children: Map<string, TreeNode>;
+        }
+
+        const root: TreeNode = { name: path, isDir: true, children: new Map() };
+        const maxFiles = 100;
+        const limitedFiles = files.slice(0, maxFiles);
+        const wasLimited = files.length > maxFiles;
+
+        // Build tree from file paths
+        for (const filePath of limitedFiles) {
+          const parts = filePath.split('/');
+          let current = root;
+
+          for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            const isLast = i === parts.length - 1;
+
+            if (!current.children.has(part)) {
+              current.children.set(part, {
+                name: part,
+                isDir: !isLast,
+                children: new Map()
+              });
+            }
+            current = current.children.get(part)!;
           }
         }
+
+        // Format tree as string
+        const formatTree = (node: TreeNode, prefix: string = "", isLast: boolean = true, isRoot: boolean = true): string => {
+          let result = "";
+
+          if (isRoot) {
+            result += node.name + "/\n";
+          } else {
+            const connector = isLast ? "└── " : "├── ";
+            result += prefix + connector + node.name + (node.isDir ? "/" : "") + "\n";
+          }
+
+          const children = Array.from(node.children.values()).sort((a, b) => {
+            // Directories first, then alphabetically
+            if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          });
+
+          children.forEach((child, index) => {
+            const newPrefix = isRoot ? "" : prefix + (isLast ? "    " : "│   ");
+            result += formatTree(child, newPrefix, index === children.length - 1, false);
+          });
+
+          return result;
+        };
+
+        let result = formatTree(root);
+        result += `\nFound ${wasLimited ? maxFiles : files.length} file${files.length !== 1 ? 's' : ''}`;
+
+        if (wasLimited) {
+          result += ` (showing first ${maxFiles} of ${files.length}, use more specific path to see more)`;
+        }
+
+        resolve({
+          content: [{
+            type: "text" as const,
+            text: result
+          }]
+        });
       });
-
-      bashProcess.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-
-      // Default ignore patterns similar to OpenCode
-      const defaultIgnorePatterns = [
-        "node_modules",
-        ".git",
-        "dist",
-        "build",
-        "target",
-        ".next",
-        ".nuxt",
-        ".vscode",
-        ".idea",
-        "*.log",
-        ".DS_Store",
-        "Thumbs.db",
-        "*.tmp",
-        "*.temp"
-      ];
-      
-      const allIgnorePatterns = [...defaultIgnorePatterns, ...ignore];
-      
-      // Build find command with ignore patterns
-      let findCommand = `find "${path}" -type f -o -type d`;
-      
-      // Add exclude patterns
-      for (const pattern of allIgnorePatterns) {
-        findCommand += ` | grep -v "${pattern}"`;
-      }
-      
-      // Create a bash script to list directory contents
-      const lsScript = `
-# Check if directory exists
-if [ ! -d "${path}" ]; then
-  echo "Error: Directory ${path} not found"
-  echo "${uniqueMarker}EXIT_CODE:1"
-  exit 1
-fi
-
-# Change to the directory
-cd "${path}" || {
-  echo "Error: Cannot access directory ${path}"
-  echo "${uniqueMarker}EXIT_CODE:1"
-  exit 1
-}
-
-# List files and directories with details, limit to 100 entries
-ls -la | head -n 101 | while IFS= read -r line; do
-  # Skip total line
-  if [[ "$line" == total* ]]; then
-    continue
-  fi
-  echo "$line"
-done
-
-# Check if there are more than 100 entries
-TOTAL_COUNT=$(ls -1 | wc -l)
-if [ "$TOTAL_COUNT" -gt 100 ]; then
-  echo ""
-  echo "Note: Showing first 100 of $TOTAL_COUNT total entries"
-fi
-
-echo "${uniqueMarker}EXIT_CODE:0"
-`;
-
-      bashProcess.stdin.write(lsScript);
     });
   }
 );
@@ -931,53 +919,53 @@ if (shouldRegisterTool("file_grep")) {
     console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
-      const bashProcess = spawn("bash", [], {
+      // Build ripgrep arguments
+      const rgArgs = [
+        "-n",                    // Show line numbers
+        "-H",                    // Show filenames
+        "--field-match-separator=|",  // Use | as separator for easier parsing
+        "--sort=modified",       // Sort by modification time (newest first)
+      ];
+
+      if (caseInsensitive) {
+        rgArgs.push("-i");
+      }
+
+      if (include) {
+        rgArgs.push("--glob", include);
+      }
+
+      rgArgs.push("--regexp", pattern);
+      rgArgs.push(path);
+
+      const rgProcess = spawn("rg", rgArgs, {
         stdio: ["pipe", "pipe", "pipe"],
         cwd: workspacePath
       });
 
-      if (!bashProcess.stdin || !bashProcess.stdout || !bashProcess.stderr) {
+      let stdout = "";
+      let stderr = "";
+
+      const timeoutId = setTimeout(() => {
+        rgProcess.kill();
         resolve({
           content: [{
             type: "text" as const,
-            text: "Error: Failed to create process streams\nExit code: 1"
+            text: "Error: Search operation timed out\nExit code: 1"
           }]
         });
-        return;
-      }
-
-      let stdout = "";
-      let stderr = "";
-      let completed = false;
-      const uniqueMarker = `__GREP_END_${Date.now()}_${Math.random().toString(36).substring(2)}__`;
-
-      const cleanup = () => {
-        if (!completed) {
-          completed = true;
-          bashProcess.stdout?.removeAllListeners("data");
-          bashProcess.stderr?.removeAllListeners("data");
-          bashProcess.removeAllListeners("error");
-          bashProcess.removeAllListeners("exit");
-        }
-      };
-
-      const timeoutId = setTimeout(() => {
-        if (!completed) {
-          completed = true;
-          cleanup();
-          bashProcess.kill();
-          resolve({
-            content: [{
-              type: "text" as const,
-              text: "Error: Grep operation timed out\nExit code: 1"
-            }]
-          });
-        }
       }, 30000); // 30 second timeout
 
-      bashProcess.on("error", (error) => {
+      rgProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      rgProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      rgProcess.on("error", (error) => {
         clearTimeout(timeoutId);
-        cleanup();
         resolve({
           content: [{
             type: "text" as const,
@@ -986,125 +974,217 @@ if (shouldRegisterTool("file_grep")) {
         });
       });
 
-      bashProcess.on("exit", (code) => {
-        if (!completed) {
-          clearTimeout(timeoutId);
-          cleanup();
-          completed = true;
-          
-          const exitCode = code ?? 1;
-          let result = "";
-          
-          if (stdout.trim() || stderr.trim()) {
-            const cleanStdout = stdout.replace(new RegExp(`${uniqueMarker}.*`, 's'), '').trim();
-            const cleanStderr = stderr.trim();
-            
-            if (exitCode === 0 || exitCode === 1) { // grep returns 1 when no matches found
-              result = cleanStdout || "No matches found";
-            } else if (cleanStderr) {
-              result = cleanStderr;
-            } else if (cleanStdout) {
-              result = cleanStdout;
-            }
-          }
-          
-          if (exitCode > 1) { // grep error codes > 1 indicate actual errors
-            result = result || "Grep operation failed";
-            result += `\nExit code: ${exitCode}`;
-          }
-          
+      rgProcess.on("close", (code) => {
+        clearTimeout(timeoutId);
+
+        // ripgrep exit codes: 0 = matches found, 1 = no matches, 2 = error
+        if (code === 1) {
           resolve({
             content: [{
               type: "text" as const,
-              text: result
+              text: "No matches found"
             }]
           });
+          return;
         }
-      });
 
-      bashProcess.stdout.on("data", (data) => {
-        const text = data.toString();
-        stdout += text;
-        
-        if (text.includes(uniqueMarker) && !completed) {
-          bashProcess.stdin.end();
-          
-          clearTimeout(timeoutId);
-          const parts = stdout.split(uniqueMarker);
-          const exitCodeMatch = parts[1]?.match(/EXIT_CODE:(\d+)/);
-          const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1]) : 0;
-          
-          cleanup();
-          completed = true;
-          
-          let result = parts[0].trim();
-          const cleanStderr = stderr.trim();
-          
-          if (exitCode === 0 || exitCode === 1) { // 0 = matches found, 1 = no matches
-            result = result || "No matches found";
-            resolve({
-              content: [{
-                type: "text" as const,
-                text: result
-              }]
-            });
-          } else {
-            result = cleanStderr || result || "Grep operation failed";
-            result += `\nExit code: ${exitCode}`;
-            
-            resolve({
-              content: [{
-                type: "text" as const,
-                text: result
-              }]
-            });
+        if (code && code > 1) {
+          resolve({
+            content: [{
+              type: "text" as const,
+              text: stderr.trim() || "Search operation failed\nExit code: " + code
+            }]
+          });
+          return;
+        }
+
+        // Parse ripgrep output and group by file
+        const lines = stdout.trim().split('\n').filter(line => line.length > 0);
+
+        if (lines.length === 0) {
+          resolve({
+            content: [{
+              type: "text" as const,
+              text: "No matches found"
+            }]
+          });
+          return;
+        }
+
+        // Group matches by file
+        const fileMatches = new Map<string, Array<{ lineNum: string; content: string }>>();
+        let totalMatches = 0;
+
+        for (const line of lines) {
+          // Format: filename|linenum|content (due to --field-match-separator=|)
+          const firstPipe = line.indexOf('|');
+          const secondPipe = line.indexOf('|', firstPipe + 1);
+
+          if (firstPipe === -1 || secondPipe === -1) continue;
+
+          const filename = line.substring(0, firstPipe);
+          const lineNum = line.substring(firstPipe + 1, secondPipe);
+          const content = line.substring(secondPipe + 1);
+
+          if (!fileMatches.has(filename)) {
+            fileMatches.set(filename, []);
           }
+
+          // Truncate long lines
+          const truncatedContent = content.length > 200
+            ? content.substring(0, 200) + '...'
+            : content;
+
+          fileMatches.get(filename)!.push({ lineNum, content: truncatedContent });
+          totalMatches++;
+
+          // Stop if we've reached maxResults
+          if (totalMatches >= maxResults) break;
         }
+
+        // Format output grouped by file
+        let result = "";
+        const fileCount = fileMatches.size;
+
+        for (const [filename, matches] of fileMatches) {
+          result += `${filename} (${matches.length} match${matches.length > 1 ? 'es' : ''}):\n`;
+          for (const match of matches) {
+            result += `  ${match.lineNum.padStart(5)}| ${match.content}\n`;
+          }
+          result += '\n';
+        }
+
+        // Add summary
+        const wasLimited = lines.length > maxResults;
+        result += `Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in ${fileCount} file${fileCount !== 1 ? 's' : ''}`;
+
+        if (wasLimited) {
+          result += ` (showing first ${maxResults}, use more specific pattern to narrow results)`;
+        }
+
+        resolve({
+          content: [{
+            type: "text" as const,
+            text: truncateOutput(result)
+          }]
+        });
+      });
+    });
+  }
+);
+}
+
+if (shouldRegisterTool("file_glob")) {
+  server.registerTool(
+    "file_glob",
+  {
+    title: "Find Files by Pattern",
+    description: "Fast file pattern matching tool that works with any codebase size.\n\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n- Returns matching file paths sorted by modification time\n- Use this tool when you need to find files by name patterns\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root.",
+    inputSchema: {
+      pattern: z.string().describe("Glob pattern to match files (e.g., \"**/*.js\", \"src/**/*.ts\")"),
+      path: z.string().optional().default(".").describe("Directory to search in (default: current directory)"),
+      rationale: z.string().describe("Explanation of why you need to find these files"),
+      maxResults: z.number().optional().default(100).describe("Maximum number of files to return (default: 100)")
+    }
+  },
+  async ({ pattern, path = ".", rationale, maxResults = 100 }) => {
+    await ensureWorkspaceExists();
+    const workspacePath = getWorkspacePath();
+
+    console.error(`Finding files matching: ${pattern} in ${path}`);
+    console.error(`Rationale: ${rationale}`);
+
+    return new Promise((resolve) => {
+      // Use ripgrep's file finding with glob pattern, sorted by modification time
+      const rgArgs = [
+        "--files",
+        "--glob", pattern,
+        "--sort=modified",
+        path
+      ];
+
+      const rgProcess = spawn("rg", rgArgs, {
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: workspacePath
       });
 
-      bashProcess.stderr.on("data", (data) => {
+      let stdout = "";
+      let stderr = "";
+
+      const timeoutId = setTimeout(() => {
+        rgProcess.kill();
+        resolve({
+          content: [{
+            type: "text" as const,
+            text: "Error: Glob operation timed out\nExit code: 1"
+          }]
+        });
+      }, 30000); // 30 second timeout
+
+      rgProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      rgProcess.stderr.on("data", (data) => {
         stderr += data.toString();
       });
 
-      // Escape pattern for safe shell usage
-      const escapedPattern = pattern.replace(/'/g, "'\"'\"'");
+      rgProcess.on("error", (error) => {
+        clearTimeout(timeoutId);
+        resolve({
+          content: [{
+            type: "text" as const,
+            text: `Error spawning process: ${error.message}\nExit code: 1`
+          }]
+        });
+      });
 
-      // Build grep command with options
-      let grepCommand = "grep -E -rn"; // extended regex, recursive, show line numbers
+      rgProcess.on("close", (code) => {
+        clearTimeout(timeoutId);
 
-      if (caseInsensitive) {
-        grepCommand += "i"; // case insensitive
-      }
-      
-      // Add file include pattern if specified
-      const includeOption = include ? `--include="${include}"` : "";
-      
-      // Create a bash script to perform the grep search
-      const grepScript = `
-# Change to the specified directory
-cd "${path}" || {
-  echo "Error: Directory ${path} not found"
-  echo "${uniqueMarker}EXIT_CODE:1"
-  exit 1
-}
+        // ripgrep exit codes: 0 = files found, 1 = no files, 2 = error
+        if (code === 1 || !stdout.trim()) {
+          resolve({
+            content: [{
+              type: "text" as const,
+              text: "No files found"
+            }]
+          });
+          return;
+        }
 
-# Perform grep search with specified options
-${grepCommand} ${includeOption} '${escapedPattern}' . 2>/dev/null | head -n ${maxResults}
-EXIT_CODE=$?
+        if (code && code > 1) {
+          resolve({
+            content: [{
+              type: "text" as const,
+              text: stderr.trim() || "Glob operation failed\nExit code: " + code
+            }]
+          });
+          return;
+        }
 
-# Count total matches (without limit) for reporting
-TOTAL_MATCHES=$(${grepCommand} ${includeOption} '${escapedPattern}' . 2>/dev/null | wc -l)
+        // Parse file list and apply limit
+        const files = stdout.trim().split('\n').filter(f => f.length > 0);
+        const totalFiles = files.length;
+        const limitedFiles = files.slice(0, maxResults);
+        const wasLimited = totalFiles > maxResults;
 
-# Add summary information
-if [ $TOTAL_MATCHES -gt ${maxResults} ]; then
-  echo ""
-  echo "Note: Showing first ${maxResults} of $TOTAL_MATCHES total matches"
-fi
+        // Format output
+        let result = limitedFiles.join('\n');
+        result += '\n\n';
+        result += `Found ${wasLimited ? maxResults : totalFiles} file${totalFiles !== 1 ? 's' : ''}`;
 
-echo "${uniqueMarker}EXIT_CODE:$EXIT_CODE"
-`;
+        if (wasLimited) {
+          result += ` (showing first ${maxResults} of ${totalFiles}, use more specific pattern to narrow results)`;
+        }
 
-      bashProcess.stdin.write(grepScript);
+        resolve({
+          content: [{
+            type: "text" as const,
+            text: result
+          }]
+        });
+      });
     });
   }
 );
@@ -1380,34 +1460,42 @@ if (shouldRegisterTool("file_read")) {
           clearTimeout(timeoutId);
           cleanup();
           completed = true;
-          
+
           const exitCode = code ?? 1;
-          let result = "";
-          
-          if (stdout.trim() || stderr.trim()) {
-            const cleanStdout = stdout.replace(new RegExp(`${uniqueMarker}.*`, 's'), '').trim();
-            const cleanStderr = stderr.trim();
-            
-            if (exitCode === 0 && cleanStdout) {
-              result = cleanStdout;
-            } else if (cleanStderr) {
-              result = cleanStderr;
-            } else if (cleanStdout) {
-              result = cleanStdout;
+          const rawContent = stdout.replace(new RegExp(`${uniqueMarker}.*`, 's'), '');
+          const cleanStderr = stderr.trim();
+
+          if (exitCode === 0 && rawContent) {
+            // Success - format line numbers
+            const lines = rawContent.endsWith('\n')
+              ? rawContent.slice(0, -1).split('\n')
+              : rawContent.split('\n');
+
+            const formatted = lines.map((line, index) => {
+              const lineNum = (index + offset + 1).toString().padStart(5, ' ');
+              return `${lineNum}| ${line}`;
+            }).join('\n');
+
+            resolve({
+              content: [{
+                type: "text" as const,
+                text: truncateOutput(formatted)
+              }]
+            });
+          } else {
+            // Error - return error message
+            let result = cleanStderr || rawContent.trim() || "Read operation failed";
+            if (exitCode !== 0) {
+              result += `\nExit code: ${exitCode}`;
             }
+
+            resolve({
+              content: [{
+                type: "text" as const,
+                text: result
+              }]
+            });
           }
-          
-          if (exitCode !== 0) {
-            result = result || "Read operation failed";
-            result += `\nExit code: ${exitCode}`;
-          }
-          
-          resolve({
-            content: [{
-              type: "text" as const,
-              text: result
-            }]
-          });
         }
       });
 
@@ -1425,23 +1513,33 @@ if (shouldRegisterTool("file_read")) {
           
           cleanup();
           completed = true;
-          
-          let result = parts[0].trim();
+
+          const rawContent = parts[0];
           const cleanStderr = stderr.trim();
-          
+
           if (exitCode === 0) {
-            // Success - return file contents
+            // Success - format line numbers and return file contents
+            // Split by newline, but handle trailing newline from bash output
+            const lines = rawContent.endsWith('\n')
+              ? rawContent.slice(0, -1).split('\n')
+              : rawContent.split('\n');
+
+            const formatted = lines.map((line, index) => {
+              const lineNum = (index + offset + 1).toString().padStart(5, ' ');
+              return `${lineNum}| ${line}`;
+            }).join('\n');
+
             resolve({
               content: [{
                 type: "text" as const,
-                text: result
+                text: truncateOutput(formatted)
               }]
             });
           } else {
             // Error - return error message
-            result = cleanStderr || result || "Read operation failed";
+            let result = cleanStderr || rawContent.trim() || "Read operation failed";
             result += `\nExit code: ${exitCode}`;
-            
+
             resolve({
               content: [{
                 type: "text" as const,
@@ -1479,8 +1577,8 @@ if file "${filePath}" | grep -q "binary"; then
   exit 1
 fi
 
-# Read file with offset and limit, adding line numbers
-tail -n +$((${offset} + 1)) "${filePath}" | head -n ${limit} | cat -n
+# Read file with offset and limit, truncate long lines (line numbers added by TypeScript)
+tail -n +$((${offset} + 1)) "${filePath}" | head -n ${limit} | cut -c1-2000
 echo "${uniqueMarker}EXIT_CODE:0"
 `;
 

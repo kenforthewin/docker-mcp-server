@@ -65,6 +65,7 @@ This is an **MCP (Model Context Protocol) Server** that runs entirely inside a D
 - **`file_write`** - Create/overwrite files (requires prior read)
 - **`file_edit`** - Exact string replacement edits (requires prior read)
 - **`file_ls`** - List directory contents with ignore patterns
+- **`file_glob`** - Find files by glob pattern (e.g., `**/*.js`)
 - **`file_grep`** - Search file contents with regex support
 
 All file operations work within `/app/workspace` which is mounted from host `./tmp`.
@@ -96,6 +97,7 @@ environment:
 - `file_write`
 - `file_edit`
 - `file_ls`
+- `file_glob`
 - `file_grep`
 
 **Note:** Changes to `ALLOWED_TOOLS` require restarting the container with `npm run docker:restart`.

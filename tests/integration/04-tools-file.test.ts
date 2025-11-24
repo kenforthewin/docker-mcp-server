@@ -120,9 +120,82 @@ describe('File Operation Tools', () => {
 
       const readContent = await readFile(client, filename);
 
-      // Should have line numbers (cat -n format)
-      expect(readContent).toMatch(/\d+.*Line 1/);
-      expect(readContent).toMatch(/\d+.*Line 2/);
+      // Should have line numbers with pipe separator format: "    1| content"
+      expect(readContent).toMatch(/\d+\|.*Line 1/);
+      expect(readContent).toMatch(/\d+\|.*Line 2/);
+    });
+
+    it('should format line numbers consistently', async () => {
+      const filename = randomFilename();
+      const content = 'First\nSecond\nThird';
+
+      await writeFile(client, filename, content);
+
+      const readContent = await readFile(client, filename);
+
+      // All lines should have consistent format: space-padded number + pipe + content
+      expect(readContent).toMatch(/^\s*1\| First/m);
+      expect(readContent).toMatch(/^\s*2\| Second/m);
+      expect(readContent).toMatch(/^\s*3\| Third/m);
+    });
+
+    it('should show correct line numbers with offset', async () => {
+      const filename = randomFilename();
+      const content = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
+
+      await writeFile(client, filename, content);
+
+      const result = await client.callTool({
+        name: 'file_read',
+        arguments: {
+          filePath: filename,
+          rationale: 'Test line numbers with offset',
+          offset: 5, // Skip first 5 lines
+          limit: 100
+        }
+      });
+
+      let readContent = '';
+      if (Array.isArray(result.content) && result.content.length > 0) {
+        const firstContent = result.content[0];
+        if (firstContent && typeof firstContent === 'object' && 'text' in firstContent) {
+          readContent = firstContent.text as string;
+        }
+      }
+
+      // Line numbers should start at 6 (offset + 1), not 1
+      expect(readContent).toMatch(/^\s*6\| Line 6/m);
+      expect(readContent).toMatch(/^\s*7\| Line 7/m);
+      expect(readContent).toMatch(/^\s*10\| Line 10/m);
+      // Should NOT have line 1-5
+      expect(readContent).not.toMatch(/^\s*1\| /m);
+    });
+
+    it('should handle single line file', async () => {
+      const filename = randomFilename();
+      const content = 'Single line content';
+
+      await writeFile(client, filename, content);
+
+      const readContent = await readFile(client, filename);
+
+      expect(readContent).toMatch(/^\s*1\| Single line content/m);
+    });
+
+    it('should handle file with empty lines', async () => {
+      const filename = randomFilename();
+      const content = 'First\n\nThird\n\nFifth';
+
+      await writeFile(client, filename, content);
+
+      const readContent = await readFile(client, filename);
+
+      // Empty lines should still have line numbers
+      expect(readContent).toMatch(/^\s*1\| First/m);
+      expect(readContent).toMatch(/^\s*2\| $/m);  // Empty line 2
+      expect(readContent).toMatch(/^\s*3\| Third/m);
+      expect(readContent).toMatch(/^\s*4\| $/m);  // Empty line 4
+      expect(readContent).toMatch(/^\s*5\| Fifth/m);
     });
 
     it('should handle reading with offset', async () => {
@@ -380,14 +453,16 @@ describe('File Operation Tools', () => {
       expect(fileCount).toBeGreaterThanOrEqual(3);
     });
 
-    it('should show file details', async () => {
-      await writeFile(client, randomFilename(), 'Test content');
+    it('should show tree structure', async () => {
+      // Create nested files
+      await writeFile(client, 'tree-test/file1.txt', 'Test content');
+      await writeFile(client, 'tree-test/subdir/file2.txt', 'Test content');
 
       const result = await client.callTool({
         name: 'file_ls',
         arguments: {
           path: '.',
-          rationale: 'Test file details'
+          rationale: 'Test tree structure'
         }
       });
 
@@ -399,8 +474,32 @@ describe('File Operation Tools', () => {
         }
       }
 
-      // Should show permissions, size, etc. (ls -la format)
-      expect(lsOutput).toMatch(/\d+/); // Should have numbers (size, date, etc.)
+      // Should show tree characters
+      expect(lsOutput).toMatch(/[├└]/);
+      expect(lsOutput).toContain('tree-test');
+    });
+
+    it('should show file count', async () => {
+      await writeFile(client, randomFilename(), 'Test content');
+
+      const result = await client.callTool({
+        name: 'file_ls',
+        arguments: {
+          path: '.',
+          rationale: 'Test file count'
+        }
+      });
+
+      let lsOutput = '';
+      if (Array.isArray(result.content) && result.content.length > 0) {
+        const firstContent = result.content[0];
+        if (firstContent && typeof firstContent === 'object' && 'text' in firstContent) {
+          lsOutput = firstContent.text as string;
+        }
+      }
+
+      // Should show file count
+      expect(lsOutput).toMatch(/Found \d+ files?/);
     });
 
     it('should handle empty directory', async () => {
@@ -444,6 +543,125 @@ describe('File Operation Tools', () => {
       }
 
       expect(lsOutput.toLowerCase()).toMatch(/error|not found/);
+    });
+  });
+
+  describe('file_glob tool', () => {
+    beforeEach(async () => {
+      // Create files for glob testing
+      await writeFile(client, 'glob-test.txt', 'test');
+      await writeFile(client, 'glob-test.js', 'test');
+      await writeFile(client, 'glob-test.ts', 'test');
+      await writeFile(client, 'subdir/nested.txt', 'test');
+    });
+
+    it('should find files matching pattern', async () => {
+      const result = await client.callTool({
+        name: 'file_glob',
+        arguments: {
+          pattern: '*.txt',
+          rationale: 'Test glob pattern'
+        }
+      });
+
+      let globOutput = '';
+      if (Array.isArray(result.content) && result.content.length > 0) {
+        const firstContent = result.content[0];
+        if (firstContent && typeof firstContent === 'object' && 'text' in firstContent) {
+          globOutput = firstContent.text as string;
+        }
+      }
+
+      expect(globOutput).toContain('glob-test.txt');
+      expect(globOutput).not.toContain('glob-test.js');
+    });
+
+    it('should find files with recursive pattern', async () => {
+      const result = await client.callTool({
+        name: 'file_glob',
+        arguments: {
+          pattern: '**/*.txt',
+          rationale: 'Test recursive glob'
+        }
+      });
+
+      let globOutput = '';
+      if (Array.isArray(result.content) && result.content.length > 0) {
+        const firstContent = result.content[0];
+        if (firstContent && typeof firstContent === 'object' && 'text' in firstContent) {
+          globOutput = firstContent.text as string;
+        }
+      }
+
+      expect(globOutput).toContain('glob-test.txt');
+      expect(globOutput).toContain('nested.txt');
+    });
+
+    it('should handle no matches', async () => {
+      const result = await client.callTool({
+        name: 'file_glob',
+        arguments: {
+          pattern: '*.nonexistent',
+          rationale: 'Test no matches'
+        }
+      });
+
+      let globOutput = '';
+      if (Array.isArray(result.content) && result.content.length > 0) {
+        const firstContent = result.content[0];
+        if (firstContent && typeof firstContent === 'object' && 'text' in firstContent) {
+          globOutput = firstContent.text as string;
+        }
+      }
+
+      expect(globOutput.toLowerCase()).toContain('no files found');
+    });
+
+    it('should respect maxResults limit', async () => {
+      // Create many files
+      for (let i = 0; i < 20; i++) {
+        await writeFile(client, `many-${i}.txt`, 'test');
+      }
+
+      const result = await client.callTool({
+        name: 'file_glob',
+        arguments: {
+          pattern: 'many-*.txt',
+          rationale: 'Test max results',
+          maxResults: 5
+        }
+      });
+
+      let globOutput = '';
+      if (Array.isArray(result.content) && result.content.length > 0) {
+        const firstContent = result.content[0];
+        if (firstContent && typeof firstContent === 'object' && 'text' in firstContent) {
+          globOutput = firstContent.text as string;
+        }
+      }
+
+      // Should mention limiting
+      expect(globOutput).toContain('showing first 5');
+    });
+
+    it('should show file count in output', async () => {
+      const result = await client.callTool({
+        name: 'file_glob',
+        arguments: {
+          pattern: 'glob-test.*',
+          rationale: 'Test file count'
+        }
+      });
+
+      let globOutput = '';
+      if (Array.isArray(result.content) && result.content.length > 0) {
+        const firstContent = result.content[0];
+        if (firstContent && typeof firstContent === 'object' && 'text' in firstContent) {
+          globOutput = firstContent.text as string;
+        }
+      }
+
+      expect(globOutput).toMatch(/Found \d+ files?/);
     });
   });
 
@@ -496,8 +714,8 @@ describe('File Operation Tools', () => {
         }
       }
 
-      // Should have line numbers (filename:line:content format)
-      expect(grepOutput).toMatch(/:\d+:/);
+      // Should have line numbers (number|content format)
+      expect(grepOutput).toMatch(/\d+\|/);
     });
 
     it('should handle case insensitive search', async () => {
@@ -509,6 +727,7 @@ describe('File Operation Tools', () => {
           pattern: 'uppercase',
           rationale: 'Test case insensitive',
           path: '.',
+          include: 'grep-case.txt',
           caseInsensitive: true
         }
       });

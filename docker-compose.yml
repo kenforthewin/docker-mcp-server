@@ -11,7 +11,7 @@ services:
     volumes:
       - ./tmp:/app/workspace
       # Uncomment if you want to give container access to host docker (dangerous)
-      # - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock
     # environment:
       # - ALLOWED_TOOLS=execute_command
     restart: unless-stopped

@@ -66,6 +66,47 @@ describe('Command Execution Tools', () => {
       expect(result).toContain('stderr');
     });
 
+    it('should handle 2>&1 redirection', async () => {
+      const result = await executeAndWait(
+        client,
+        'echo "stdout"; echo "stderr" >&2; echo "done"',
+        'Test stderr redirection',
+        5
+      );
+
+      expect(result).toContain('stdout');
+      expect(result).toContain('stderr');
+      expect(result).toContain('done');
+      expect(result).toContain('Exit code: 0');
+    });
+
+    it('should handle stderr redirection for error commands', async () => {
+      const result = await executeAndWait(
+        client,
+        'ls /nonexistent 2>&1',
+        'Test stderr redirection on error',
+        5
+      );
+
+      // Should complete without hanging
+      expect(result).toBeDefined();
+      // Should capture error message
+      expect(result.toLowerCase()).toMatch(/no such file|cannot access/);
+    });
+
+    it('should handle 2>&1 with pipes', async () => {
+      const result = await executeAndWait(
+        client,
+        'echo "line1" && echo "line2" >&2 && echo "line3" 2>&1 | head -n 2',
+        'Test stderr redirection with pipe',
+        5
+      );
+
+      // Should not hang
+      expect(result).toBeDefined();
+      expect(result).toContain('Exit code: 0');
+    });
+
     it('should return exit code for successful command', async () => {
       const result = await executeAndWait(
         client,

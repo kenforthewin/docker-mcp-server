@@ -27,10 +27,10 @@ describe('File Operation Tools', () => {
       const filename = randomFilename();
       const content = 'Test file content';
 
-      await writeFile(client, filename, content, 'Test file creation');
+      await writeFile(client, filename, content);
 
       // Verify file was created by reading it
-      const readContent = await readFile(client, filename, 'Verify file created');
+      const readContent = await readFile(client, filename);
 
       expect(readContent).toContain(content);
     });
@@ -149,7 +149,6 @@ describe('File Operation Tools', () => {
         name: 'file_read',
         arguments: {
           filePath: filename,
-          rationale: 'Test line numbers with offset',
           offset: 5, // Skip first 5 lines
           limit: 100
         }
@@ -208,7 +207,6 @@ describe('File Operation Tools', () => {
         name: 'file_read',
         arguments: {
           filePath: filename,
-          rationale: 'Test offset',
           offset: 2, // Skip first 2 lines
           limit: 100
         }
@@ -237,7 +235,6 @@ describe('File Operation Tools', () => {
         name: 'file_read',
         arguments: {
           filePath: filename,
-          rationale: 'Test limit',
           offset: 0,
           limit: 10  // Only first 10 lines
         }
@@ -261,7 +258,6 @@ describe('File Operation Tools', () => {
         name: 'file_read',
         arguments: {
           filePath: 'nonexistent-file-xyz.txt',
-          rationale: 'Test nonexistent file'
         }
       });
 
@@ -291,7 +287,6 @@ describe('File Operation Tools', () => {
           filePath: filename,
           oldString: 'Hello World',
           newString: 'Hi Universe',
-          rationale: 'Test text replacement'
         }
       });
 
@@ -314,7 +309,6 @@ describe('File Operation Tools', () => {
           filePath: filename,
           oldString: 'test',
           newString: 'replaced',
-          rationale: 'Test single replacement',
           replaceAll: false
         }
       });
@@ -341,7 +335,6 @@ describe('File Operation Tools', () => {
           filePath: filename,
           oldString: 'test',
           newString: 'replaced',
-          rationale: 'Test replace all',
           replaceAll: true
         }
       });
@@ -365,7 +358,6 @@ describe('File Operation Tools', () => {
           filePath: filename,
           oldString: 'Line 1\nLine 2',
           newString: 'Replaced Lines',
-          rationale: 'Test multiline replacement'
         }
       });
 
@@ -387,7 +379,6 @@ describe('File Operation Tools', () => {
           filePath: filename,
           oldString: 'Nonexistent text',
           newString: 'New text',
-          rationale: 'Test string not found'
         }
       });
 
@@ -414,7 +405,6 @@ describe('File Operation Tools', () => {
           filePath: filename,
           oldString: 'Original',
           newString: 'Modified',
-          rationale: 'Test backup creation'
         }
       });
 
@@ -427,15 +417,14 @@ describe('File Operation Tools', () => {
   describe('file_ls tool', () => {
     it('should list files in directory', async () => {
       // Create some test files
-      await writeFile(client, randomFilename('list', 'txt'), 'File 1');
-      await writeFile(client, randomFilename('list', 'txt'), 'File 2');
-      await writeFile(client, randomFilename('list', 'txt'), 'File 3');
+      await writeFile(client, randomFilename('list', 'txt'), 'test content');
+      await writeFile(client, randomFilename('list', 'txt'), 'test content');
+      await writeFile(client, randomFilename('list', 'txt'), 'test content');
 
       const result = await client.callTool({
         name: 'file_ls',
         arguments: {
           path: '.',
-          rationale: 'Test directory listing'
         }
       });
 
@@ -462,7 +451,6 @@ describe('File Operation Tools', () => {
         name: 'file_ls',
         arguments: {
           path: '.',
-          rationale: 'Test tree structure'
         }
       });
 
@@ -486,7 +474,6 @@ describe('File Operation Tools', () => {
         name: 'file_ls',
         arguments: {
           path: '.',
-          rationale: 'Test file count'
         }
       });
 
@@ -510,7 +497,6 @@ describe('File Operation Tools', () => {
         name: 'file_ls',
         arguments: {
           path: '.',
-          rationale: 'Test empty directory'
         }
       });
 
@@ -530,7 +516,6 @@ describe('File Operation Tools', () => {
         name: 'file_ls',
         arguments: {
           path: '/nonexistent/directory/xyz',
-          rationale: 'Test nonexistent directory'
         }
       });
 
@@ -560,7 +545,6 @@ describe('File Operation Tools', () => {
         name: 'file_glob',
         arguments: {
           pattern: '*.txt',
-          rationale: 'Test glob pattern'
         }
       });
 
@@ -581,7 +565,6 @@ describe('File Operation Tools', () => {
         name: 'file_glob',
         arguments: {
           pattern: '**/*.txt',
-          rationale: 'Test recursive glob'
         }
       });
 
@@ -602,7 +585,6 @@ describe('File Operation Tools', () => {
         name: 'file_glob',
         arguments: {
           pattern: '*.nonexistent',
-          rationale: 'Test no matches'
         }
       });
 
@@ -627,7 +609,6 @@ describe('File Operation Tools', () => {
         name: 'file_glob',
         arguments: {
           pattern: 'many-*.txt',
-          rationale: 'Test max results',
           maxResults: 5
         }
       });
@@ -649,7 +630,6 @@ describe('File Operation Tools', () => {
         name: 'file_glob',
         arguments: {
           pattern: 'glob-test.*',
-          rationale: 'Test file count'
         }
       });
 
@@ -678,7 +658,6 @@ describe('File Operation Tools', () => {
         name: 'file_grep',
         arguments: {
           pattern: 'apple',
-          rationale: 'Test grep search',
           path: '.'
         }
       });
@@ -701,7 +680,6 @@ describe('File Operation Tools', () => {
         name: 'file_grep',
         arguments: {
           pattern: 'apple',
-          rationale: 'Test line numbers',
           path: '.'
         }
       });
@@ -725,7 +703,6 @@ describe('File Operation Tools', () => {
         name: 'file_grep',
         arguments: {
           pattern: 'uppercase',
-          rationale: 'Test case insensitive',
           path: '.',
           include: 'grep-case.txt',
           caseInsensitive: true
@@ -751,7 +728,6 @@ describe('File Operation Tools', () => {
         name: 'file_grep',
         arguments: {
           pattern: 'function',
-          rationale: 'Test file filtering',
           path: '.',
           include: '*.js'
         }
@@ -774,7 +750,6 @@ describe('File Operation Tools', () => {
         name: 'file_grep',
         arguments: {
           pattern: 'zzzznonexistent',
-          rationale: 'Test no matches',
           path: '.'
         }
       });
@@ -800,7 +775,6 @@ describe('File Operation Tools', () => {
         name: 'file_grep',
         arguments: {
           pattern: 'searchterm',
-          rationale: 'Test max results',
           path: '.',
           maxResults: 10
         }
@@ -825,7 +799,6 @@ describe('File Operation Tools', () => {
         name: 'file_grep',
         arguments: {
           pattern: 'test[0-9]+',
-          rationale: 'Test regex',
           path: '.'
         }
       });

@@ -20,7 +20,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'echo "Hello World"',
-        'Test simple echo command',
         5
       );
 
@@ -32,7 +31,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'echo "Line 1" && echo "Line 2" && echo "Line 3"',
-        'Test stdout capture',
         5
       );
 
@@ -45,7 +43,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'echo "Error message" >&2',
-        'Test stderr capture',
         5
       );
 
@@ -56,7 +53,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'echo "stdout" && echo "stderr" >&2',
-        'Test combined output',
         5
       );
 
@@ -70,7 +66,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'echo "stdout"; echo "stderr" >&2; echo "done"',
-        'Test stderr redirection',
         5
       );
 
@@ -84,7 +79,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'ls /nonexistent 2>&1',
-        'Test stderr redirection on error',
         5
       );
 
@@ -98,7 +92,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'echo "line1" && echo "line2" >&2 && echo "line3" 2>&1 | head -n 2',
-        'Test stderr redirection with pipe',
         5
       );
 
@@ -111,7 +104,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'exit 0',
-        'Test success exit code',
         5
       );
 
@@ -122,7 +114,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'exit 42',
-        'Test failure exit code',
         5
       );
 
@@ -133,7 +124,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'echo "Test with $pecial ch@racters!"',
-        'Test special characters',
         5
       );
 
@@ -147,7 +137,6 @@ describe('Command Execution Tools', () => {
         `echo "First"
          echo "Second"
          echo "Third"`,
-        'Test multiline command',
         5
       );
 
@@ -160,7 +149,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'pwd',
-        'Test working directory',
         5
       );
 
@@ -171,7 +159,6 @@ describe('Command Execution Tools', () => {
       const result = await executeAndWait(
         client,
         'true',
-        'Test command with no output',
         5
       );
 
@@ -188,7 +175,6 @@ EOF`;
       const result = await executeAndWait(
         client,
         command,
-        'Test heredoc with cat command',
         5
       );
 
@@ -209,7 +195,6 @@ PY`;
       const result = await executeAndWait(
         client,
         command,
-        'Test heredoc with inline Python script',
         5
       );
 
@@ -225,8 +210,7 @@ PY`;
       const result = await executeAndWait(
         client,
         'sleep 30',
-        'Test backgrounding',
-        2  // Short maxWaitTime to trigger backgrounding
+        2// Short maxWaitTime to trigger backgrounding
       );
 
       expect(result).toContain('Process ID:');
@@ -237,7 +221,6 @@ PY`;
       const result = await executeAndWait(
         client,
         'sleep 20',
-        'Test process ID',
         2
       );
 
@@ -250,8 +233,7 @@ PY`;
       const result = await executeAndWait(
         client,
         'echo "Quick command"',
-        'Test fast command',
-        20  // Long maxWaitTime
+        20// Long maxWaitTime
       );
 
       expect(result).toContain('Quick command');
@@ -265,8 +247,7 @@ PY`;
       const result = await executeAndWait(
         client,
         'sleep 30',
-        'Test maxWaitTime',
-        3  // 3 seconds
+        3// 3 seconds
       );
 
       const duration = Date.now() - startTime;
@@ -283,7 +264,6 @@ PY`;
       const execResult = await executeAndWait(
         client,
         'sleep 15',
-        'Start process for checking',
         2
       );
 
@@ -294,8 +274,7 @@ PY`;
       const checkResult = await client.callTool({
         name: 'check_process',
         arguments: {
-          processId: processId!,
-          rationale: 'Check running process'
+          processId: processId!
         }
       });
 
@@ -316,7 +295,6 @@ PY`;
       const execResult = await executeAndWait(
         client,
         'echo "Done" && sleep 3',
-        'Start process that will complete',
         2
       );
 
@@ -330,8 +308,7 @@ PY`;
       const checkResult = await client.callTool({
         name: 'check_process',
         arguments: {
-          processId: processId!,
-          rationale: 'Check completed process'
+          processId: processId!
         }
       });
 
@@ -352,7 +329,6 @@ PY`;
         name: 'check_process',
         arguments: {
           processId: 'proc_999999_nonexistent',
-          rationale: 'Check nonexistent process'
         }
       });
 
@@ -372,7 +348,6 @@ PY`;
       const execResult = await executeAndWait(
         client,
         'echo "Process output" && sleep 10',
-        'Start process with output',
         2
       );
 
@@ -386,7 +361,6 @@ PY`;
         name: 'check_process',
         arguments: {
           processId: processId!,
-          rationale: 'Check process output'
         }
       });
 
@@ -408,7 +382,6 @@ PY`;
       const execResult = await executeAndWait(
         client,
         'read line && echo "Received: $line"',
-        'Start interactive process',
         2
       );
 
@@ -421,7 +394,6 @@ PY`;
         arguments: {
           processId: processId!,
           input: 'test input',
-          rationale: 'Send test input',
           autoNewline: true
         }
       });
@@ -443,7 +415,6 @@ PY`;
         name: 'check_process',
         arguments: {
           processId: processId!,
-          rationale: 'Check after input'
         }
       });
 
@@ -463,7 +434,6 @@ PY`;
       const execResult = await executeAndWait(
         client,
         'read -r data && echo "Data: $data"',
-        'Start read process',
         2
       );
 
@@ -475,7 +445,6 @@ PY`;
         arguments: {
           processId: processId!,
           input: 'test',
-          rationale: 'Test no newline',
           autoNewline: false  // This is what we're testing - no auto newline
         }
       });
@@ -497,7 +466,6 @@ PY`;
         arguments: {
           processId: 'proc_999999_nonexistent',
           input: 'test',
-          rationale: 'Test nonexistent process'
         }
       });
 
@@ -517,7 +485,6 @@ PY`;
       const execResult = await executeAndWait(
         client,
         'echo "done"',
-        'Start process that completes',
         5
       );
 
@@ -535,7 +502,6 @@ PY`;
       const result = await executeAndWait(
         client,
         'nonexistent_command_xyz',
-        'Test command error',
         5
       );
 
@@ -548,7 +514,6 @@ PY`;
       const result = await executeAndWait(
         client,
         'echo "unclosed quote',
-        'Test syntax error',
         5
       );
 
@@ -560,7 +525,6 @@ PY`;
       const result = await executeAndWait(
         client,
         'for i in {1..100}; do echo "Line $i"; done',
-        'Test long output',
         10
       );
 

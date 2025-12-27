@@ -21,7 +21,7 @@ describe('MCP Server Aggregation', () => {
       const toolNames = result.tools.map(t => t.name);
 
       // Should have tools from memory server (namespaced)
-      const memoryTools = toolNames.filter(name => name.startsWith('memory:'));
+      const memoryTools = toolNames.filter(name => name.startsWith('memory__'));
       expect(memoryTools.length).toBeGreaterThan(0);
     });
 
@@ -29,11 +29,11 @@ describe('MCP Server Aggregation', () => {
       const result = await client.listTools();
       const toolNames = result.tools.map(t => t.name);
 
-      // All memory server tools should start with "memory:"
-      const memoryTools = toolNames.filter(name => name.startsWith('memory:'));
+      // All memory server tools should start with "memory__"
+      const memoryTools = toolNames.filter(name => name.startsWith('memory__'));
 
       for (const toolName of memoryTools) {
-        expect(toolName).toMatch(/^memory:[a-z_]+$/);
+        expect(toolName).toMatch(/^memory__[a-z_]+$/);
       }
     });
 
@@ -48,13 +48,13 @@ describe('MCP Server Aggregation', () => {
       expect(toolNames).toContain('check_process');
 
       // Child server tools should also be available
-      const memoryTools = toolNames.filter(name => name.startsWith('memory:'));
+      const memoryTools = toolNames.filter(name => name.startsWith('memory__'));
       expect(memoryTools.length).toBeGreaterThan(0);
     });
 
     it('should include child server name in tool descriptions', async () => {
       const result = await client.listTools();
-      const memoryTools = result.tools.filter(t => t.name.startsWith('memory:'));
+      const memoryTools = result.tools.filter(t => t.name.startsWith('memory__'));
 
       for (const tool of memoryTools) {
         expect(tool.description).toContain('[memory]');
@@ -66,7 +66,7 @@ describe('MCP Server Aggregation', () => {
     it('should successfully call child server tools', async () => {
       // Create entities in the knowledge graph
       const createResult = await client.callTool({
-        name: 'memory:create_entities',
+        name: 'memory__create_entities',
         arguments: {
           entities: [
             {
@@ -98,7 +98,7 @@ describe('MCP Server Aggregation', () => {
     it('should handle tool calls with multiple operations', async () => {
       // First create some entities
       await client.callTool({
-        name: 'memory:create_entities',
+        name: 'memory__create_entities',
         arguments: {
           entities: [
             { name: 'entity1', entityType: 'concept', observations: ['First entity'] },
@@ -109,7 +109,7 @@ describe('MCP Server Aggregation', () => {
 
       // Then create a relation between them
       const relationResult = await client.callTool({
-        name: 'memory:create_relations',
+        name: 'memory__create_relations',
         arguments: {
           relations: [
             {
@@ -128,7 +128,7 @@ describe('MCP Server Aggregation', () => {
     it('should work with search operations', async () => {
       // Search for entities
       const searchResult = await client.callTool({
-        name: 'memory:search_nodes',
+        name: 'memory__search_nodes',
         arguments: {
           query: 'test'
         }
@@ -141,7 +141,7 @@ describe('MCP Server Aggregation', () => {
     it('should handle errors from child servers gracefully', async () => {
       // Try to create a relation with non-existent entities
       const result = await client.callTool({
-        name: 'memory:create_relations',
+        name: 'memory__create_relations',
         arguments: {
           relations: [
             {
@@ -164,8 +164,7 @@ describe('MCP Server Aggregation', () => {
       const result = await client.callTool({
         name: 'execute_command',
         arguments: {
-          command: 'echo "Aggregation test"',
-          rationale: 'Test native tool with aggregation enabled'
+          command: 'echo "Aggregation test"'
         }
       });
 
@@ -186,8 +185,7 @@ describe('MCP Server Aggregation', () => {
         name: 'file_write',
         arguments: {
           filePath: 'test-aggregation.txt',
-          content: 'Testing aggregation',
-          rationale: 'Test native file tool'
+          content: 'Testing aggregation'
         }
       });
 
@@ -195,8 +193,7 @@ describe('MCP Server Aggregation', () => {
       const readResult = await client.callTool({
         name: 'file_read',
         arguments: {
-          filePath: 'test-aggregation.txt',
-          rationale: 'Verify file write'
+          filePath: 'test-aggregation.txt'
         }
       });
 
@@ -215,12 +212,11 @@ describe('MCP Server Aggregation', () => {
         client.callTool({
           name: 'execute_command',
           arguments: {
-            command: 'echo "native"',
-            rationale: 'Concurrent test 1'
+            command: 'echo "native"'
           }
         }),
         client.callTool({
-          name: 'memory:search_nodes',
+          name: 'memory__search_nodes',
           arguments: {
             query: 'test'
           }
@@ -228,8 +224,7 @@ describe('MCP Server Aggregation', () => {
         client.callTool({
           name: 'file_read',
           arguments: {
-            filePath: 'test-aggregation.txt',
-            rationale: 'Concurrent test 2'
+            filePath: 'test-aggregation.txt'
           }
         })
       ]);
@@ -256,7 +251,7 @@ describe('MCP Server Aggregation', () => {
 
     it('should provide schemas for child server tools', async () => {
       const result = await client.listTools();
-      const memoryTools = result.tools.filter(t => t.name.startsWith('memory:'));
+      const memoryTools = result.tools.filter(t => t.name.startsWith('memory__'));
 
       for (const tool of memoryTools) {
         expect(tool.inputSchema).toBeDefined();

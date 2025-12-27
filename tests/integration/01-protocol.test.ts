@@ -111,8 +111,7 @@ describe('MCP Protocol Conformance', () => {
       const result = await client.callTool({
         name: 'execute_command',
         arguments: {
-          command: 'echo "test"',
-          rationale: 'Test protocol response format'
+          command: 'echo "test"'
         }
       });
 
@@ -128,8 +127,7 @@ describe('MCP Protocol Conformance', () => {
       const result = await client.callTool({
         name: 'execute_command',
         arguments: {
-          command: 'echo "hello"',
-          rationale: 'Test content format'
+          command: 'echo "hello"'
         }
       });
 
@@ -161,8 +159,7 @@ describe('MCP Protocol Conformance', () => {
         client.callTool({
           name: 'execute_command',
           arguments: {
-            command: 'echo test'
-            // Missing required 'rationale' parameter
+            // Missing required 'command' parameter
           } as any
         })
       ).rejects.toThrow();
@@ -184,7 +181,7 @@ describe('MCP Protocol Conformance', () => {
         client.callTool({
           name: 'file_read',
           arguments: {
-            // Missing required 'filePath' and 'rationale'
+            // Missing required 'filePath'
           } as any
         })
       ).rejects.toThrow();
@@ -195,8 +192,7 @@ describe('MCP Protocol Conformance', () => {
         client.callTool({
           name: 'execute_command',
           arguments: {
-            command: 123, // Should be string
-            rationale: 'test'
+            command: 123 // Should be string
           } as any
         })
       ).rejects.toThrow();

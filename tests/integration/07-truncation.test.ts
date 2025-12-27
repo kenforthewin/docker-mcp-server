@@ -69,8 +69,7 @@ describe('Line Truncation', () => {
         name: 'file_grep',
         arguments: {
           pattern: 'FINDME',
-          path: '.',
-          rationale: 'Test grep truncation'
+          path: '.'
         }
       });
 
@@ -83,9 +82,12 @@ describe('Line Truncation', () => {
       expect(text).toContain('FINDME');
     });
 
-    it('should not truncate grep results under 2000 characters', async () => {
+    it('should not truncate grep results under 200 characters', async () => {
       const filename = randomFilename();
-      const normalLine = 'SEARCHTERM' + 'y'.repeat(200);
+      // grep truncates at 200 chars, so use a line that fits within that limit
+      // SEARCHTERM (10 chars) + 100 z's = 110 chars total, well under 200
+      // Using 'z' to avoid matching random chars in filename
+      const normalLine = 'SEARCHTERM' + 'z'.repeat(100);
       const content = normalLine;
 
       await writeFile(client, filename, content);
@@ -94,16 +96,15 @@ describe('Line Truncation', () => {
         name: 'file_grep',
         arguments: {
           pattern: 'SEARCHTERM',
-          path: '.',
-          rationale: 'Test grep no truncation'
+          path: '.'
         }
       });
 
       const text = (result.content as Array<{text: string}>)[0].text;
 
-      // All 200 y's should be present
-      const yCount = (text.match(/y/g) || []).length;
-      expect(yCount).toBe(200);
+      // All 100 z's should be present (line is under 200 char limit)
+      const zCount = (text.match(/z/g) || []).length;
+      expect(zCount).toBe(100);
     });
   });
 });

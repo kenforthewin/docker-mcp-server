@@ -20,8 +20,7 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'sleep 30',
-        'Test inactivity backgrounding',
-        3  // 3 second timeout
+        3// 3 second timeout
       );
 
       expect(result).toContain('Process ID:');
@@ -33,8 +32,7 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'echo "fast"',
-        'Test fast command',
-        10  // Long timeout
+        10// Long timeout
       );
 
       expect(result).not.toContain('Process ID:');
@@ -47,8 +45,7 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'for i in 1 2 3; do echo $i; sleep 1; done',
-        'Test output resets timer',
-        10  // Should complete within 10 seconds
+        10// Should complete within 10 seconds
       );
 
       // Should complete successfully, not background
@@ -62,8 +59,7 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'sleep 20',
-        'Test custom inactivityTimeout',
-        5  // 5 seconds
+        5// 5 seconds
       );
 
       const duration = Date.now() - startTime;
@@ -87,8 +83,7 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'sleep 10 && echo "Done"',
-        'Test immediate backgrounding',
-        0  // 0 = immediate background
+        0// 0 = immediate background
       );
 
       const duration = Date.now() - startTime;
@@ -106,8 +101,7 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'echo "Testing cap"',
-        'Test timeout capping',
-        700  // 700 seconds - should be capped to 600
+        700// 700 seconds - should be capped to 600
       );
 
       // Command should complete successfully (fast command)
@@ -122,9 +116,9 @@ describe('Process Management', () => {
     it('should track multiple processes simultaneously', async () => {
       // Start 3 processes in parallel
       const results = await Promise.all([
-        executeAndWait(client, 'sleep 15 && echo "Process 1"', 'Process 1', 2),
-        executeAndWait(client, 'sleep 15 && echo "Process 2"', 'Process 2', 2),
-        executeAndWait(client, 'sleep 15 && echo "Process 3"', 'Process 3', 2)
+        executeAndWait(client, 'sleep 15 && echo "Process 1"', 2),
+        executeAndWait(client, 'sleep 15 && echo "Process 2"', 2),
+        executeAndWait(client, 'sleep 15 && echo "Process 3"', 2)
       ]);
 
       // Extract process IDs
@@ -138,17 +132,17 @@ describe('Process Management', () => {
 
       // Check status of each process
       for (const processId of processIds) {
-        const status = await checkProcess(client, processId!, 'Check concurrent process');
+        const status = await checkProcess(client, processId!);
         expect(status).toContain('Process Status:');
       }
     });
 
     it('should handle mixed fast and slow processes', async () => {
       const results = await Promise.all([
-        executeAndWait(client, 'echo "Fast 1"', 'Fast 1', 10),
-        executeAndWait(client, 'sleep 15', 'Slow 1', 2),
-        executeAndWait(client, 'echo "Fast 2"', 'Fast 2', 10),
-        executeAndWait(client, 'sleep 15', 'Slow 2', 2)
+        executeAndWait(client, 'echo "Fast 1"', 10),
+        executeAndWait(client, 'sleep 15', 2),
+        executeAndWait(client, 'echo "Fast 2"', 10),
+        executeAndWait(client, 'sleep 15', 2)
       ]);
 
       // First and third should complete immediately
@@ -168,13 +162,11 @@ describe('Process Management', () => {
       const result1 = await executeAndWait(
         client,
         'echo "Process A output" && sleep 10',
-        'Process A',
         2
       );
       const result2 = await executeAndWait(
         client,
         'echo "Process B output" && sleep 10',
-        'Process B',
         2
       );
 
@@ -188,8 +180,8 @@ describe('Process Management', () => {
       // Check each process output
       await delay(1000);
 
-      const status1 = await checkProcess(client, pid1!, 'Check process A');
-      const status2 = await checkProcess(client, pid2!, 'Check process B');
+      const status1 = await checkProcess(client, pid1!);
+      const status2 = await checkProcess(client, pid2!);
 
       expect(status1).toContain('Process A output');
       expect(status1).not.toContain('Process B output');
@@ -205,7 +197,6 @@ describe('Process Management', () => {
       const startResult = await executeAndWait(
         client,
         'sleep 5 && echo "Completed"',
-        'Test lifecycle',
         2
       );
 
@@ -213,14 +204,14 @@ describe('Process Management', () => {
       expect(processId).toBeTruthy();
 
       // Check while running
-      const runningStatus = await checkProcess(client, processId!, 'Check running');
+      const runningStatus = await checkProcess(client, processId!);
       expect(runningStatus).toContain('Process Status: RUNNING');
 
       // Wait for completion
       await delay(6000);
 
       // Check after completion
-      const completedStatus = await checkProcess(client, processId!, 'Check completed');
+      const completedStatus = await checkProcess(client, processId!);
       expect(completedStatus).toContain('Process Status: COMPLETED');
       expect(completedStatus).toContain('Completed');
       expect(completedStatus).toContain('Exit code: 0');
@@ -230,7 +221,6 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'sleep 10',
-        'Test duration',
         2
       );
 
@@ -238,7 +228,7 @@ describe('Process Management', () => {
 
       await delay(3000);
 
-      const status = await checkProcess(client, processId!, 'Check duration');
+      const status = await checkProcess(client, processId!);
 
       expect(status).toContain('Running for:');
       expect(status).toMatch(/\d+\s+seconds?/);
@@ -248,7 +238,6 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'echo "Final output" && sleep 3',
-        'Test final output',
         2
       );
 
@@ -257,7 +246,7 @@ describe('Process Management', () => {
       // Wait for completion
       await delay(4000);
 
-      const status = await checkProcess(client, processId!, 'Get final output');
+      const status = await checkProcess(client, processId!);
 
       expect(status).toContain('COMPLETED');
       expect(status).toContain('Final output');
@@ -268,7 +257,6 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'sleep 3 && exit 42',
-        'Test error exit',
         2
       );
 
@@ -276,7 +264,7 @@ describe('Process Management', () => {
 
       await delay(4000);
 
-      const status = await checkProcess(client, processId!, 'Check error exit');
+      const status = await checkProcess(client, processId!);
 
       expect(status).toContain('COMPLETED');
       expect(status).toContain('Exit code: 42');
@@ -289,7 +277,6 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'echo "Line 1" && sleep 3 && echo "Line 2" && sleep 3 && echo "Line 3"',
-        'Test incremental output',
         2
       );
 
@@ -298,11 +285,11 @@ describe('Process Management', () => {
 
       // Check at different points
       await delay(4000); // After "Line 2" should be visible
-      const status1 = await checkProcess(client, processId!, 'Check at 4s');
+      const status1 = await checkProcess(client, processId!);
       expect(status1).toContain('Line');
 
       await delay(3000); // After "Line 3" and completion
-      const status2 = await checkProcess(client, processId!, 'Check at 7s');
+      const status2 = await checkProcess(client, processId!);
 
       // Should show completed status with all lines
       if (status2.includes('COMPLETED')) {
@@ -316,7 +303,6 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'echo "Started" && sleep 10',
-        'Test current output',
         2
       );
 
@@ -324,7 +310,7 @@ describe('Process Management', () => {
 
       await delay(1000);
 
-      const status = await checkProcess(client, processId!, 'Check current output');
+      const status = await checkProcess(client, processId!);
 
       expect(status).toContain('Process Status: RUNNING');
       expect(status).toContain('Current Output:');
@@ -335,7 +321,6 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'sleep 10',
-        'Test no output',
         2
       );
 
@@ -343,7 +328,7 @@ describe('Process Management', () => {
 
       await delay(1000);
 
-      const status = await checkProcess(client, processId!, 'Check no output');
+      const status = await checkProcess(client, processId!);
 
       expect(status).toContain('Process Status: RUNNING');
       // Should handle gracefully (may say "No output captured")
@@ -353,7 +338,6 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'echo "stdout message" && echo "stderr message" >&2 && sleep 10',
-        'Test stdout/stderr',
         2
       );
 
@@ -361,7 +345,7 @@ describe('Process Management', () => {
 
       await delay(1000);
 
-      const status = await checkProcess(client, processId!, 'Check output separation');
+      const status = await checkProcess(client, processId!);
 
       expect(status).toContain('stdout message');
       expect(status).toContain('stderr message');
@@ -380,46 +364,27 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         command,
-        'Test command in status',
         2
       );
 
       const processId = extractProcessId(result);
 
-      const status = await checkProcess(client, processId!, 'Check command');
+      const status = await checkProcess(client, processId!);
 
       expect(status).toContain('Command:');
       expect(status).toContain('echo');
-    });
-
-    it('should include rationale in status', async () => {
-      const rationale = 'Special test rationale';
-      const result = await executeAndWait(
-        client,
-        'sleep 10',
-        rationale,
-        2
-      );
-
-      const processId = extractProcessId(result);
-
-      const status = await checkProcess(client, processId!, 'Check rationale');
-
-      expect(status).toContain('Rationale:');
-      expect(status).toContain(rationale);
     });
 
     it('should show process ID in status', async () => {
       const result = await executeAndWait(
         client,
         'sleep 10',
-        'Test process ID in status',
         2
       );
 
       const processId = extractProcessId(result);
 
-      const status = await checkProcess(client, processId!, 'Check ID');
+      const status = await checkProcess(client, processId!);
 
       expect(status).toContain('Process ID:');
       expect(status).toContain(processId!);
@@ -431,7 +396,6 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'sleep 10',
-        'Test multiple checks',
         2
       );
 
@@ -439,7 +403,7 @@ describe('Process Management', () => {
 
       // Check multiple times
       for (let i = 0; i < 5; i++) {
-        const status = await checkProcess(client, processId!, `Check ${i + 1}`);
+        const status = await checkProcess(client, processId!);
         expect(status).toContain('Process Status:');
         await delay(500);
       }
@@ -449,7 +413,6 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'sleep 0.5',
-        'Test very short',
         2
       );
 
@@ -460,8 +423,10 @@ describe('Process Management', () => {
 
     it('should generate unique process IDs', async () => {
       const results = await Promise.all(
-        Array(10).fill(null).map((_, i) =>
-          executeAndWait(client, 'sleep 15', `Process ${i}`, 1)
+        Array(10).fill(null).map(() =>
+          executeAndWait(
+        client,
+        'sleep 15', 1)
         )
       );
 
@@ -476,7 +441,6 @@ describe('Process Management', () => {
       const result = await executeAndWait(
         client,
         'exit 0',
-        'Test immediate exit',
         5
       );
 

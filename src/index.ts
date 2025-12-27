@@ -28,11 +28,10 @@ const DEFAULT_KEEP_ALIVE_TIMEOUT = 5000; // 5 seconds (Node.js default)
 
 /**
  * Get the workspace path for the current request.
- * If an Execution-Id header was provided, returns /app/workspace
- * Otherwise returns the default /app/workspace
+ * Returns the workspace path configured via CLI (default: /app/workspace)
  */
 function getWorkspacePath(): string {
-  return "/app/workspace";
+  return WORKSPACE;
 }
 
 /**
@@ -55,6 +54,7 @@ program
   .version('1.0.0')
   .option('-p, --port <port>', 'Port to listen on', '30000')
   .option('-t, --token <token>', 'Bearer token for authentication (auto-generated if not provided)')
+  .option('-w, --workspace <path>', 'Working directory for all operations', '/app/workspace')
   .option('--http-timeout <ms>', 'HTTP request timeout in milliseconds', String(DEFAULT_HTTP_TIMEOUT))
   .option('--socket-timeout <ms>', 'Socket inactivity timeout in milliseconds', String(DEFAULT_SOCKET_TIMEOUT))
   .parse();
@@ -62,13 +62,13 @@ program
 const options = program.opts();
 const PORT = parseInt(options.port, 10);
 const AUTH_TOKEN = options.token || randomUUID();
+const WORKSPACE = options.workspace as string;
 const HTTP_TIMEOUT = parseInt(options.httpTimeout, 10);
 const SOCKET_TIMEOUT = parseInt(options.socketTimeout, 10);
 
 interface ProcessInfo {
   startTime: number;
   command: string;
-  rationale?: string;
   bashProcess?: ChildProcess;
   status: 'running' | 'completed';
   endTime?: number;
@@ -137,15 +137,14 @@ if (shouldRegisterTool("execute_command")) {
   server.registerTool(
     "execute_command",
   {
-    title: "Execute Docker Command",
-    description: "Execute a shell command inside a Docker container.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    title: "Execute Command",
+    description: `Execute a shell command. Working directory: ${WORKSPACE}`,
     inputSchema: {
-      command: z.string().describe("The shell command to execute in the container"),
-      rationale: z.string().describe("Explanation of why this command is being executed"),
-      inactivityTimeout: z.number().optional().describe("Seconds of inactivity (no output) before backgrounding the process. Timer resets whenever the command produces output. Set to 0 to background immediately. (default: 20, max: 600)")
+      command: z.string().describe("The shell command to execute"),
+      inactivityTimeout: z.number().optional().describe("Seconds of inactivity before backgrounding (default: 20, max: 600)")
     }
   },
-  async ({ command, rationale, inactivityTimeout = 20 }) => {
+  async ({ command, inactivityTimeout = 20 }) => {
     // Validate and normalize inactivityTimeout
     // Cap at 600 seconds (10 minutes, which is our hard maximum)
     if (inactivityTimeout > 600) {
@@ -157,7 +156,6 @@ if (shouldRegisterTool("execute_command")) {
 
     const workspacePath = getWorkspacePath();
     console.error(`Executing command in ${workspacePath}: ${command}`);
-    console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
       const processId = generateProcessId();
@@ -180,7 +178,6 @@ if (shouldRegisterTool("execute_command")) {
       processes.set(processId, {
         startTime: Date.now(),
         command,
-        rationale,
         bashProcess,
         status: 'running',
         lastOutputTime: Date.now(),
@@ -487,13 +484,11 @@ if (shouldRegisterTool("check_process")) {
     title: "Check Background Process",
     description: "Check the status of a background process by its ID",
     inputSchema: {
-      processId: z.string().describe("The process ID returned by a long-running command"),
-      rationale: z.string().describe("Explanation of why you need to check this process")
+      processId: z.string().describe("The process ID returned by a long-running command")
     }
   },
-  async ({ processId, rationale }) => {
+  async ({ processId }) => {
     console.error(`Checking process status: ${processId}`);
-    console.error(`Rationale: ${rationale}`);
     const processInfo = processes.get(processId);
     
     if (!processInfo) {
@@ -513,9 +508,6 @@ if (shouldRegisterTool("check_process")) {
       let result = `Process Status: COMPLETED\n`;
       result += `Process ID: ${processId}\n`;
       result += `Command: ${processInfo.command}\n`;
-      if (processInfo.rationale) {
-        result += `Rationale: ${processInfo.rationale}\n`;
-      }
       result += `Completed after: ${durationSeconds} seconds\n`;
       result += `Exit code: ${processInfo.exitCode}\n\n`;
       result += `Final Result:\n${processInfo.result}`;
@@ -557,9 +549,6 @@ if (shouldRegisterTool("check_process")) {
           let result = `Process Status: COMPLETED\n`;
           result += `Process ID: ${processId}\n`;
           result += `Command: ${currentProcessInfo.command}\n`;
-          if (currentProcessInfo.rationale) {
-            result += `Rationale: ${currentProcessInfo.rationale}\n`;
-          }
           result += `Completed after: ${durationSeconds} seconds\n`;
           result += `Exit code: ${currentProcessInfo.exitCode}\n\n`;
           result += `Final Result:\n${currentProcessInfo.result}`;
@@ -595,9 +584,6 @@ if (shouldRegisterTool("check_process")) {
           let result = `Process Status: RUNNING\n`;
           result += `Process ID: ${processId}\n`;
           result += `Command: ${currentProcessInfo.command}\n`;
-          if (currentProcessInfo.rationale) {
-            result += `Rationale: ${currentProcessInfo.rationale}\n`;
-          }
           result += `Running for: ${totalDurationSeconds} seconds\n`;
           result += `(Waited ${waitSeconds}s, ${reason})\n\n`;
           
@@ -644,11 +630,10 @@ if (shouldRegisterTool("send_input")) {
     inputSchema: {
       processId: z.string().describe("The process ID of the running process"),
       input: z.string().describe("The input to send to the process"),
-      rationale: z.string().describe("Explanation of why you need to send input to this process"),
       autoNewline: z.boolean().optional().default(true).describe("Whether to automatically add a newline (default: true)")
     }
   },
-  async ({ processId, input, rationale, autoNewline = true }) => {
+  async ({ processId, input, autoNewline = true }) => {
     const processInfo = processes.get(processId);
     
     if (!processInfo) {
@@ -681,10 +666,9 @@ if (shouldRegisterTool("send_input")) {
     try {
       const inputToSend = input + (autoNewline ? '\n' : '');
       processInfo.bashProcess.stdin.write(inputToSend);
-      
+
       console.error(`Sent input to process ${processId}: ${JSON.stringify(inputToSend)}`);
-      console.error(`Rationale: ${rationale}`);
-      
+
       return {
         content: [{
           type: "text" as const,
@@ -708,20 +692,18 @@ if (shouldRegisterTool("file_ls")) {
   server.registerTool(
     "file_ls",
   {
-    title: "List Directory Contents in Docker Container",
-    description: "Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You can optionally provide an array of glob patterns to ignore with the ignore parameter.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    title: "List Directory",
+    description: `List files and directories. Use paths relative to ${WORKSPACE}.`,
     inputSchema: {
-      path: z.string().optional().default(".").describe("The directory path to list (default: current directory)"),
-      rationale: z.string().describe("Explanation of why you need to list this directory"),
-      ignore: z.array(z.string()).optional().describe("List of glob patterns to ignore")
+      path: z.string().optional().default(".").describe("Directory path relative to workspace (default: .)"),
+      ignore: z.array(z.string()).optional().describe("Glob patterns to ignore")
     }
   },
-  async ({ path = ".", rationale, ignore = [] }) => {
+  async ({ path = ".", ignore = [] }) => {
     await ensureWorkspaceExists();
     const workspacePath = getWorkspacePath();
 
     console.error(`Listing directory: ${path}${ignore.length ? ` (ignoring: ${ignore.join(', ')})` : ''}`);
-    console.error(`Rationale: ${rationale}`);
 
     // Default ignore patterns
     const defaultIgnorePatterns = [
@@ -900,23 +882,21 @@ if (shouldRegisterTool("file_grep")) {
   server.registerTool(
     "file_grep",
   {
-    title: "Search Files in Docker Container",
-    description: "Search for patterns in files inside the Docker container using grep.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    title: "Search File Contents",
+    description: `Search for regex patterns in files within ${WORKSPACE}.`,
     inputSchema: {
-      pattern: z.string().describe("The search pattern (supports regex)"),
-      rationale: z.string().describe("Explanation of why you need to search for this pattern"),
-      path: z.string().optional().default(".").describe("The directory to search in (default: current directory)"),
-      include: z.string().optional().describe("File pattern to include (e.g., '*.js', '*.{ts,tsx}')"),
-      caseInsensitive: z.boolean().optional().default(false).describe("Case insensitive search (default: false)"),
-      maxResults: z.number().optional().default(100).describe("Maximum number of results to return (default: 100)")
+      pattern: z.string().describe("Search pattern (supports regex)"),
+      path: z.string().optional().default(".").describe("Directory to search (default: .)"),
+      include: z.string().optional().describe("File pattern to include (e.g., '*.js')"),
+      caseInsensitive: z.boolean().optional().default(false).describe("Case insensitive search"),
+      maxResults: z.number().optional().default(100).describe("Maximum results (default: 100)")
     }
   },
-  async ({ pattern, rationale, path = ".", include, caseInsensitive = false, maxResults = 100 }) => {
+  async ({ pattern, path = ".", include, caseInsensitive = false, maxResults = 100 }) => {
     await ensureWorkspaceExists();
     const workspacePath = getWorkspacePath();
 
     console.error(`Searching for pattern: ${pattern} in ${path}${include ? ` (include: ${include})` : ''}`);
-    console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
       // Build ripgrep arguments
@@ -1078,21 +1058,19 @@ if (shouldRegisterTool("file_glob")) {
   server.registerTool(
     "file_glob",
   {
-    title: "Find Files by Pattern",
-    description: "Fast file pattern matching tool that works with any codebase size.\n\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n- Returns matching file paths sorted by modification time\n- Use this tool when you need to find files by name patterns\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root.",
+    title: "Find Files",
+    description: `Find files by glob pattern (e.g., "**/*.js") within ${WORKSPACE}.`,
     inputSchema: {
-      pattern: z.string().describe("Glob pattern to match files (e.g., \"**/*.js\", \"src/**/*.ts\")"),
-      path: z.string().optional().default(".").describe("Directory to search in (default: current directory)"),
-      rationale: z.string().describe("Explanation of why you need to find these files"),
-      maxResults: z.number().optional().default(100).describe("Maximum number of files to return (default: 100)")
+      pattern: z.string().describe("Glob pattern (e.g., \"**/*.js\", \"src/**/*.ts\")"),
+      path: z.string().optional().default(".").describe("Directory to search (default: .)"),
+      maxResults: z.number().optional().default(100).describe("Maximum files to return (default: 100)")
     }
   },
-  async ({ pattern, path = ".", rationale, maxResults = 100 }) => {
+  async ({ pattern, path = ".", maxResults = 100 }) => {
     await ensureWorkspaceExists();
     const workspacePath = getWorkspacePath();
 
     console.error(`Finding files matching: ${pattern} in ${path}`);
-    console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
       // Use ripgrep's file finding with glob pattern, sorted by modification time
@@ -1194,20 +1172,18 @@ if (shouldRegisterTool("file_write")) {
   server.registerTool(
     "file_write",
   {
-    title: "Write File to Docker Container",
-    description: "Create or overwrite a file inside the Docker container with the provided content.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before writing to it, even if you intend to completely overwrite it. This ensures you understand the current state and context of the file.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    title: "Write File",
+    description: `Create or overwrite a file. Use paths relative to ${WORKSPACE}. Read the file first before writing.`,
     inputSchema: {
-      filePath: z.string().describe("The path to the file to write (relative to /app in container)"),
-      content: z.string().describe("The content to write to the file"),
-      rationale: z.string().describe("Explanation of why you need to write this file")
+      filePath: z.string().describe("File path relative to workspace"),
+      content: z.string().describe("Content to write")
     }
   },
-  async ({ filePath, content, rationale }) => {
+  async ({ filePath, content }) => {
     await ensureWorkspaceExists();
     const workspacePath = getWorkspacePath();
 
     console.error(`Writing file: ${filePath} (${content.length} characters)`);
-    console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
       const bashProcess = spawn("bash", [], {
@@ -1383,21 +1359,19 @@ if (shouldRegisterTool("file_read")) {
   server.registerTool(
     "file_read",
   {
-    title: "Read File from Docker Container",
-    description: "Reads a file from the local filesystem. You can access any file directly by using this tool.\nAssume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The filePath parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Any lines longer than 2000 characters will be truncated\n- Results are returned using cat -n format, with line numbers starting at 1\n- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    title: "Read File",
+    description: `Read a file's contents. Use paths relative to ${WORKSPACE}. Supports offset and limit for large files.`,
     inputSchema: {
-      filePath: z.string().describe("The path to the file to read (relative to /app in container)"),
-      rationale: z.string().describe("Explanation of why you need to read this file"),
-      offset: z.number().optional().default(0).describe("Starting line number (0-based, default: 0)"),
-      limit: z.number().optional().default(2000).describe("Maximum number of lines to read (default: 2000)")
+      filePath: z.string().describe("File path relative to workspace"),
+      offset: z.number().optional().default(0).describe("Starting line number (0-based)"),
+      limit: z.number().optional().default(2000).describe("Max lines to read (default: 2000)")
     }
   },
-  async ({ filePath, rationale, offset = 0, limit = 2000 }) => {
+  async ({ filePath, offset = 0, limit = 2000 }) => {
     await ensureWorkspaceExists();
     const workspacePath = getWorkspacePath();
 
     console.error(`Reading file: ${filePath} (offset: ${offset}, limit: ${limit})`);
-    console.error(`Rationale: ${rationale}`);
 
     return new Promise((resolve) => {
       const bashProcess = spawn("bash", [], {
@@ -1592,17 +1566,16 @@ if (shouldRegisterTool("file_edit")) {
   server.registerTool(
     "file_edit",
   {
-    title: "Edit File in Docker Container",
-    description: "Performs exact string replacements in files.\n\nIMPORTANT: You MUST use the file_read tool to read the file first before editing it. This ensures you have the exact text to match and understand the file's current state.\n\nUsage:\n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the oldString or newString.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n\nNOTE: This tool is scoped to the execution workspace directory at /app/workspace. All paths should be relative to this workspace root. Commands and file operations should stay within this directory as it represents the project boundary.",
+    title: "Edit File",
+    description: `Replace text in a file using exact string matching. Use paths relative to ${WORKSPACE}. Read the file first to get exact text to match.`,
     inputSchema: {
-      filePath: z.string().describe("The path to the file to edit (relative to /app in container)"),
-      oldString: z.string().describe("The exact text to replace"),
-      newString: z.string().describe("The replacement text"),
-      rationale: z.string().describe("Explanation of why you need to edit this file"),
-      replaceAll: z.boolean().optional().default(false).describe("Whether to replace all occurrences (default: false)")
+      filePath: z.string().describe("File path relative to workspace"),
+      oldString: z.string().describe("Exact text to replace"),
+      newString: z.string().describe("Replacement text"),
+      replaceAll: z.boolean().optional().default(false).describe("Replace all occurrences")
     }
   },
-  async ({ filePath, oldString, newString, rationale, replaceAll = false }) => {
+  async ({ filePath, oldString, newString, replaceAll = false }) => {
     if (oldString === newString) {
       return {
         content: [{
@@ -1616,7 +1589,6 @@ if (shouldRegisterTool("file_edit")) {
     const workspacePath = getWorkspacePath();
 
     console.error(`Editing file: ${filePath}`);
-    console.error(`Rationale: ${rationale}`);
     console.error(`Replacing "${oldString.substring(0, 100)}${oldString.length > 100 ? '...' : ''}" with "${newString.substring(0, 100)}${newString.length > 100 ? '...' : ''}"`);
 
     return new Promise((resolve) => {

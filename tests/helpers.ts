@@ -44,14 +44,12 @@ export function randomFilename(prefix: string = 'test', extension: string = 'txt
 export async function executeAndWait(
   client: Client,
   command: string,
-  rationale: string,
   inactivityTimeout: number = 10
 ): Promise<string> {
   const result = await client.callTool({
     name: 'execute_command',
     arguments: {
       command,
-      rationale,
       inactivityTimeout
     }
   });
@@ -71,14 +69,12 @@ export async function executeAndWait(
  */
 export async function readFile(
   client: Client,
-  filePath: string,
-  rationale: string = 'Test file read'
+  filePath: string
 ): Promise<string> {
   const result = await client.callTool({
     name: 'file_read',
     arguments: {
-      filePath,
-      rationale
+      filePath
     }
   });
 
@@ -98,15 +94,13 @@ export async function readFile(
 export async function writeFile(
   client: Client,
   filePath: string,
-  content: string,
-  rationale: string = 'Test file write'
+  content: string
 ): Promise<void> {
   await client.callTool({
     name: 'file_write',
     arguments: {
       filePath,
-      content,
-      rationale
+      content
     }
   });
 }
@@ -116,14 +110,12 @@ export async function writeFile(
  */
 export async function checkProcess(
   client: Client,
-  processId: string,
-  rationale: string = 'Check process status'
+  processId: string
 ): Promise<string> {
   const result = await client.callTool({
     name: 'check_process',
     arguments: {
-      processId,
-      rationale
+      processId
     }
   });
 
@@ -173,7 +165,6 @@ export async function cleanupTestFiles(client: Client, pattern: string = 'test-*
     await executeAndWait(
       client,
       `rm -f ${pattern}`,
-      'Cleanup test files',
       5
     );
   } catch (error) {
